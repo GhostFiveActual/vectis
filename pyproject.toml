@@ -1,0 +1,53 @@
+# GHOST FIVE // VECTIS
+# Package metadata, supported Python versions, and build configuration for VECTIS.
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vectis-lang"
+version = "0.7.0"
+description = "Deterministic automation language for inspectable execution plans and explicit authority"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11"
+authors = [
+  { name = "Ghost Five" }
+]
+keywords = [
+  "automation",
+  "dsl",
+  "deterministic",
+  "workflow",
+  "compiler",
+  "runtime"
+]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Compilers",
+  "Topic :: Software Development :: Interpreters",
+]
+
+[project.urls]
+Homepage = "https://github.com/GhostFiveActual/vectis"
+Repository = "https://github.com/GhostFiveActual/vectis"
+Issues = "https://github.com/GhostFiveActual/vectis/issues"
+
+[project.scripts]
+vectis = "vectis.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vectis = ["studio_assets/*.html", "studio_assets/*.css", "studio_assets/*.js", "demo_assets/*.html", "demo_assets/*.css", "demo_assets/*.js"]

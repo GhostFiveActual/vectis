@@ -1,0 +1,7 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: assertions.
+mission "Assertions" {
+    source score 92;
+    assert score >= 70;
+    publish "quality gate passed";
+}

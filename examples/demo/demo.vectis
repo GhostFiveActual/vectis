@@ -1,0 +1,12 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: demo.
+mission "VECTIS submission demo" {
+    source ready true;
+    source result "complete";
+
+    when ready {
+        publish result;
+    } otherwise {
+        request "review";
+    }
+}

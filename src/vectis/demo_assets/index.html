@@ -1,0 +1,170 @@
+<!doctype html>
+<!-- GHOST FIVE // VECTIS | Launch Control demonstration application. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>VECTIS // Launch Control</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="brand">GHOST FIVE // VECTIS</p>
+        <p class="system-label">LAUNCH CONTROL // DETERMINISTIC MISSION DEMO</p>
+        <h1>Launch Control</h1>
+        <p class="lede">A language for turning what you intend to happen into a system that can prove how it will happen.</p>
+      </div>
+      <div class="clock-block">
+        <span>MISSION STATE</span>
+        <strong id="header-status">READY</strong>
+      </div>
+    </header>
+
+    <section class="scenario-bar" aria-label="Launch scenarios">
+      <span>SCENARIO</span>
+      <button type="button" data-scenario="nominal">Nominal</button>
+      <button type="button" data-scenario="weather">Weather Hold</button>
+      <button type="button" data-scenario="systems">Systems Hold</button>
+      <button type="button" data-scenario="risk">Risk Hold</button>
+    </section>
+
+    <section class="hero-grid">
+      <form class="panel controls" id="readiness-form">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">FLIGHT CONFIGURATION</p>
+            <h2>Launch Inputs</h2>
+          </div>
+          <button type="submit">Execute Launch Sequence</button>
+        </div>
+
+        <div class="field-grid">
+          <label>Mission<input id="mission" value="Orbital demonstration flight" required></label>
+          <label>Vehicle<input id="vehicle" value="VECTIS-01" required></label>
+          <label>Flight Director<input id="operator" value="Flight Director" required></label>
+        </div>
+
+        <div class="slider-grid">
+          <label>
+            Quality
+            <span class="range-value"><output id="quality-value">96</output>%</span>
+            <input id="quality" type="range" min="0" max="100" value="96">
+          </label>
+          <label>
+            Fuel
+            <span class="range-value"><output id="fuel-value">97</output>%</span>
+            <input id="fuel" type="range" min="0" max="100" value="97">
+          </label>
+          <label>
+            Weather
+            <span class="range-value"><output id="weather-value">92</output>%</span>
+            <input id="weather" type="range" min="0" max="100" value="92">
+          </label>
+          <label>
+            Mission Risk
+            <span class="range-value"><output id="risk-value">18</output></span>
+            <input id="risk" type="range" min="0" max="100" value="18">
+          </label>
+        </div>
+
+        <div class="switch-grid">
+          <label class="switch-card"><input id="ready" type="checkbox" checked><span>Flight systems</span></label>
+          <label class="switch-card"><input id="navigation-ready" type="checkbox" checked><span>Navigation</span></label>
+          <label class="switch-card"><input id="communications-ready" type="checkbox" checked><span>Communications</span></label>
+          <label class="switch-card"><input id="range-clear" type="checkbox" checked><span>Range clearance</span></label>
+          <label class="switch-card"><input id="payload-ready" type="checkbox" checked><span>Payload</span></label>
+        </div>
+      </form>
+
+      <section class="panel launch-panel" aria-live="polite">
+        <p class="eyebrow">VECTIS DECISION</p>
+        <div class="launch-orb" id="launch-orb" data-state="idle">
+          <div>
+            <span id="decision-label">STANDBY</span>
+            <strong id="readiness-score">0.0</strong>
+            <small>READINESS</small>
+          </div>
+        </div>
+        <p class="decision-copy" id="decision-copy">Execute the launch sequence to compile the mission and evaluate every gate.</p>
+        <div class="metrics">
+          <div><span>NODES</span><strong id="nodes">0</strong></div>
+          <div><span>EDGES</span><strong id="edges">0</strong></div>
+          <div><span>LEVELS</span><strong id="levels">0</strong></div>
+          <div><span>STAGES</span><strong id="stages">0</strong></div>
+          <div><span>WIDTH</span><strong id="width">0</strong></div>
+          <div><span>FAILURES</span><strong id="failures">0</strong></div>
+          <div><span>PUBLISHED</span><strong id="published-count">0</strong></div>
+        </div>
+        <div class="plan-proof">
+          <span>PLAN FINGERPRINT</span>
+          <code id="fingerprint">Compile a mission to establish plan identity.</code>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">GATE TELEMETRY</p>
+          <h2>Readiness Gates</h2>
+        </div>
+      </div>
+      <div class="gate-grid">
+        <article class="gate" id="gate-systems"><span>SYSTEMS</span><strong>WAITING</strong></article>
+        <article class="gate" id="gate-environment"><span>ENVIRONMENT</span><strong>WAITING</strong></article>
+        <article class="gate" id="gate-fuel"><span>FUEL</span><strong>WAITING</strong></article>
+        <article class="gate" id="gate-payload"><span>PAYLOAD</span><strong>WAITING</strong></article>
+        <article class="gate" id="gate-risk"><span>RISK</span><strong>WAITING</strong></article>
+      </div>
+    </section>
+
+    <section class="detail-grid">
+      <section class="panel">
+        <p class="eyebrow">PUBLISHED MISSION OUTPUT</p>
+        <h2>Mission Log</h2>
+        <div class="mission-log" id="mission-log">
+          <p>No mission has executed.</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <p class="eyebrow">RUNTIME TRACE</p>
+        <h2>Execution States</h2>
+        <div class="trace" id="trace">
+          <p>No runtime trace available.</p>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel timeline-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">DETERMINISTIC EXECUTION WAVES</p>
+          <h2>Mission Timeline</h2>
+        </div>
+      </div>
+      <div class="timeline" id="timeline">
+        <p>Execute the launch sequence to inspect graph levels and node state.</p>
+      </div>
+    </section>
+
+    <section class="panel source-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">GENERATED LANGUAGE</p>
+          <h2>VECTIS Mission Source</h2>
+        </div>
+        <div class="panel-actions">
+          <button type="button" class="secondary" id="export-report" disabled>Open Proof Report</button>
+          <button type="button" class="secondary" id="copy-source">Copy Source</button>
+        </div>
+      </div>
+      <pre id="source">Execute the launch sequence to generate the exact VECTIS mission.</pre>
+    </section>
+  </main>
+</body>
+</html>

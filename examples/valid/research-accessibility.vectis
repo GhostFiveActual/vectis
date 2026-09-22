@@ -1,0 +1,14 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: research accessibility.
+mission "Research accessibility tools" {
+    source web "accessible developer tools";
+    analyze findings;
+
+    require web;
+
+    when score >= 0.80 {
+        publish findings;
+    } otherwise {
+        request human_reviewer;
+    }
+}

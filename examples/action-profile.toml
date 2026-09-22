@@ -1,0 +1,4 @@
+# GHOST FIVE // VECTIS
+# Example action profile. It grants nothing unless selected explicitly.
+[actions.filesystem]
+roots = ["."]

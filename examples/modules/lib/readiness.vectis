@@ -1,0 +1,16 @@
+// GHOST FIVE // VECTIS
+// Reusable pure functions for the deterministic modules example.
+
+function release_ready(build) {
+    return build.passed
+        && build.coverage >= 90
+        && all(build.checks);
+}
+
+function release_summary(build) {
+    return {
+        ready: release_ready(build),
+        coverage: build.coverage,
+        check_count: size(build.checks)
+    };
+}

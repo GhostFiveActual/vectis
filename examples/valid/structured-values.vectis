@@ -1,0 +1,17 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: deterministic structured values.
+mission "Structured values" {
+    source build object("passed", true, "coverage", 94, "checks", list(true, true, true));
+    let passed get(build, "passed");
+    let coverage get(build, "coverage");
+    let checks get(build, "checks");
+    let approved passed && coverage >= 90 && all(checks);
+
+    assert approved, "Build readiness requirements were not met";
+
+    publish object(
+        "status", if_else(approved, "AUTHORIZED", "REVIEW"),
+        "coverage", coverage,
+        "check_count", size(checks)
+    );
+}

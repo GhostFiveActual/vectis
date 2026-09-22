@@ -1,0 +1,22 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: user-defined pure functions.
+function release_ready(score, risk) {
+    return score >= 90 && risk <= 25;
+}
+
+function release_summary(score, risk) {
+    return object(
+        "approved", release_ready(score, risk),
+        "score", score,
+        "risk", risk
+    );
+}
+
+mission "Pure function release gate" {
+    source quality 96;
+    source risk 15;
+    let summary release_summary(quality, risk);
+
+    assert get(summary, "approved"), "Release gate failed";
+    publish summary;
+}

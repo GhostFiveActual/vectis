@@ -1,0 +1,7 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: citations.
+mission "Citation collection" {
+    citations [primary_source, secondary_source];
+    analyze findings evidence;
+    publish findings;
+}

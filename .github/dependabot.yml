@@ -1,0 +1,11 @@
+# GHOST FIVE // VECTIS
+# Dependency update policy for the VECTIS repository.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - github-actions

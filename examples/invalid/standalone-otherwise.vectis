@@ -1,0 +1,5 @@
+// GHOST FIVE // VECTIS
+// Negative language fixture: standalone otherwise.
+otherwise {
+    publish report;
+}

@@ -1,0 +1,176 @@
+# GHOST FIVE // VECTIS
+# GitHub Actions workflow for VECTIS validation and delivery.
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vectis-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch public refs for history audit
+        shell: bash
+        run: |
+          git fetch --force --prune origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*'
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package and build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m pip install -e .
+
+      - name: Repository quality gate
+        run: bash tools/quality-gate.sh
+
+      - name: Build wheel and source distribution
+        run: python -m build
+
+      - name: Isolated wheel and CLI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m venv /tmp/vectis-wheel-smoke
+          /tmp/vectis-wheel-smoke/bin/python -m pip install --upgrade pip
+
+          WHEEL="$(find dist -maxdepth 1 -name 'vectis_lang-*.whl' -print -quit)"
+          test -n "$WHEEL"
+
+          /tmp/vectis-wheel-smoke/bin/python -m pip install "$WHEEL"
+
+          cat >/tmp/vectis-ci-lib.vectis <<'VECTIS'
+          function build_ready(build) {
+              return build.score >= 90
+                  && all(build.checks)
+                  && length(build.label) > 0;
+          }
+          VECTIS
+
+          cat >/tmp/vectis-ci-smoke.vectis <<'VECTIS'
+          import "vectis-ci-lib.vectis";
+
+          mission "CI package smoke test" {
+              source score 93;
+              source raw_name " ghost five ";
+              source checks [true, true, true];
+              source build {
+                  score: score,
+                  checks: checks,
+                  label: upper(trim(raw_name))
+              };
+
+              let label build.label;
+              let approved build_ready(build);
+
+              assert approved, "Installed package structured-value smoke gate failed";
+
+              when approved {
+                  publish {
+                      status: "AUTHORIZED",
+                      label: label,
+                      check_count: size(build.checks),
+                      first_check: build.checks[0]
+                  };
+              } otherwise {
+                  request "manual-review";
+              }
+          }
+          VECTIS
+
+          cd /tmp
+
+          CLI=/tmp/vectis-wheel-smoke/bin/vectis
+          "$CLI" --version
+          "$CLI" doctor
+          "$CLI" builtins >/tmp/vectis-builtins.json
+          "$CLI" capabilities >/tmp/vectis-capabilities.json
+          "$CLI" fmt --write /tmp/vectis-ci-smoke.vectis
+          "$CLI" fmt --check /tmp/vectis-ci-smoke.vectis
+          "$CLI" check /tmp/vectis-ci-smoke.vectis
+          "$CLI" modules /tmp/vectis-ci-smoke.vectis >/tmp/vectis-modules.json
+          "$CLI" check --details /tmp/vectis-ci-smoke.vectis >/tmp/vectis-details.json
+          "$CLI" inspect /tmp/vectis-ci-smoke.vectis >/tmp/vectis-inspect.json
+          "$CLI" audit --json /tmp/vectis-ci-smoke.vectis >/tmp/vectis-audit.json
+          "$CLI" fingerprint /tmp/vectis-ci-smoke.vectis >/tmp/vectis-fingerprint.txt
+          "$CLI" limits /tmp/vectis-ci-smoke.vectis \
+            --max-nodes 50 \
+            --max-edges 100 \
+            --max-depth 50 >/tmp/vectis-limits.json
+          "$CLI" mission /tmp/vectis-ci-smoke.vectis >/tmp/vectis-mission.txt
+          "$CLI" report /tmp/vectis-ci-smoke.vectis \
+            --output /tmp/vectis-report.html
+          "$CLI" run /tmp/vectis-ci-smoke.vectis | tee /tmp/vectis-ci-result.json
+
+          grep -q "MISSION CONTROL" /tmp/vectis-mission.txt
+          grep -q "Execution Report" /tmp/vectis-report.html
+          test "$(wc -c </tmp/vectis-fingerprint.txt)" -ge 65
+
+          /tmp/vectis-wheel-smoke/bin/python - <<'PY'
+          import json
+          from importlib.resources import files
+          from pathlib import Path
+
+          result = json.loads(Path('/tmp/vectis-ci-result.json').read_text())
+          audit = json.loads(Path('/tmp/vectis-audit.json').read_text())['audit']
+          modules = json.loads(Path('/tmp/vectis-modules.json').read_text())
+          states = dict(result['node_states'])
+
+          assert result['success'] is True
+          assert result['failures'] == []
+          assert states['assert:0001'] == 'succeeded'
+          assert states['condition:0001'] == 'succeeded'
+          assert states['publish:0001'] == 'succeeded'
+          values = dict(result['node_values'])
+          assert values['build']['score'] == 93
+          assert values['build']['checks'] == [True, True, True]
+          assert values['publish:0001']['status'] == 'AUTHORIZED'
+          assert values['publish:0001']['check_count'] == 3
+          assert values['publish:0001']['first_check'] is True
+          assert len(audit['fingerprint']) == 64
+          assert audit['summary']['nodes'] >= 5
+          assert audit['determinism']['acyclic'] is True
+          assert modules['module_count'] == 2
+          assert modules['modules'][-1].endswith('vectis-ci-smoke.vectis')
+
+          for asset_dir in ('studio_assets', 'demo_assets'):
+              assets = files('vectis').joinpath(asset_dir)
+              for name in ('index.html', 'styles.css', 'app.js'):
+                  assert assets.joinpath(name).is_file(), f"{asset_dir}/{name}"
+          PY

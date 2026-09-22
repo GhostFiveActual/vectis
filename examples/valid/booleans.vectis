@@ -1,0 +1,9 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: booleans.
+mission "Boolean literals" {
+    when true {
+        publish result;
+    } otherwise {
+        request human_reviewer;
+    }
+}

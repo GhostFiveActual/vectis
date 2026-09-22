@@ -1,0 +1,58 @@
+# GHOST FIVE // VECTIS
+# GitHub issue template for structured VECTIS project feedback.
+name: Bug report
+description: Report reproducible VECTIS behavior that differs from the documented contract.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Provide a minimal reproducible case. Do not include credentials or sensitive data.
+  - type: input
+    id: version
+    attributes:
+      label: VECTIS version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.14.x"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Minimal VECTIS source
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

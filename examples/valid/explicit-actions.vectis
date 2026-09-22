@@ -1,0 +1,17 @@
+// GHOST FIVE // VECTIS
+// Demonstrates explicit external actions with visible capability boundaries.
+mission "Bounded file copy" {
+    source input_path "input.txt";
+    source output_path "output.txt";
+
+    action content "filesystem.read_text" using "filesystem" {
+        path: input_path
+    };
+
+    action receipt "filesystem.write_text" using "filesystem" {
+        path: output_path,
+        content: content
+    };
+
+    publish receipt;
+}

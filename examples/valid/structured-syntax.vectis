@@ -1,0 +1,33 @@
+// GHOST FIVE // VECTIS
+// Demonstrates first-class structured values, access syntax, and pure functions.
+
+function summarize(build) {
+    return {
+        ready: build.passed
+            && build.coverage >= 90
+            && all(build.checks),
+        coverage: build.coverage,
+        first_check: build.checks[0],
+        check_count: size(build.checks)
+    };
+}
+
+mission "Structured syntax" {
+    source build {
+        passed: true,
+        coverage: 96,
+        checks: [true, true, true]
+    };
+
+    let summary summarize(build);
+
+    assert summary.ready,
+        "Structured build readiness requirements were not met";
+
+    publish {
+        status: if_else(summary.ready, "AUTHORIZED", "REVIEW"),
+        coverage: summary.coverage,
+        first_check: summary.first_check,
+        check_count: summary.check_count
+    };
+}

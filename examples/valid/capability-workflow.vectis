@@ -1,0 +1,7 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: capability workflow.
+mission "Capability workflow" {
+    require "filesystem";
+    request "network";
+    publish "capabilities checked";
+}

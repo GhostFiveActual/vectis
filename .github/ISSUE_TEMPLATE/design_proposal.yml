@@ -1,0 +1,52 @@
+# GHOST FIVE // VECTIS
+# GitHub issue template for durable VECTIS language and architecture proposals.
+name: Design proposal
+description: Propose a durable language, runtime, compatibility, or authority contract.
+title: "[Design]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for changes that may require a VECTIS RFC. Keep the proposal focused on public behavior and contracts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and use cases
+      description: Describe the concrete limitation and who encounters it.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Proposed contract
+      description: Describe syntax, semantics, interfaces, or behavior precisely.
+    validations:
+      required: true
+  - type: textarea
+    id: determinism
+    attributes:
+      label: Determinism
+      description: Explain how repeated planning and execution remain deterministic.
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Authority and security
+      description: Explain whether capabilities, adapters, filesystem, process, or network authority change.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration
+      description: Identify affected public contracts and migration requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain simpler designs and why they are insufficient.

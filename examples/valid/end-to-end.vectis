@@ -1,0 +1,12 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: end to end.
+mission "End-to-end workflow" {
+    source ready true;
+    source result "complete";
+
+    when ready {
+        publish result;
+    } otherwise {
+        request "review";
+    }
+}

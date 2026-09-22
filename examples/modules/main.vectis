@@ -1,0 +1,23 @@
+// GHOST FIVE // VECTIS
+// Entry mission demonstrating deterministic file imports.
+
+import "lib/readiness.vectis";
+
+mission "Module release gate" {
+    source build {
+        passed: true,
+        coverage: 96,
+        checks: [true, true, true]
+    };
+
+    let summary release_summary(build);
+
+    assert summary.ready,
+        "Imported release readiness requirements were not met";
+
+    publish {
+        status: if_else(summary.ready, "AUTHORIZED", "REVIEW"),
+        coverage: summary.coverage,
+        check_count: summary.check_count
+    };
+}

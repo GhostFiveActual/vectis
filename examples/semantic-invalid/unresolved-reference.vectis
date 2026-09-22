@@ -1,0 +1,5 @@
+// GHOST FIVE // VECTIS
+// Negative language fixture: unresolved reference.
+mission "Unresolved reference" {
+    publish missing;
+}

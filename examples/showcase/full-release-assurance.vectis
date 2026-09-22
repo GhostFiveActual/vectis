@@ -1,0 +1,205 @@
+// GHOST FIVE // VECTIS
+// Comprehensive release assurance mission for a detailed Mission Control trace.
+
+mission "Production release assurance" {
+    stage "Build and test inputs" {
+        source build_complete true;
+        source unit_tests_passed true;
+        source integration_tests_passed true;
+        source acceptance_tests_passed true;
+        source test_count 1842;
+        source failed_tests 0;
+        source quality_score 96;
+        source coverage_percent 93;
+        source lint_score 100;
+    }
+
+    stage "Security inputs" {
+        source critical_findings 0;
+        source high_findings 1;
+        source medium_findings 3;
+        source dependency_risk 12;
+        source secrets_scan_passed true;
+    }
+
+    stage "Operations inputs" {
+        source change_approved true;
+        source release_window_open true;
+        source rollback_ready true;
+        source backup_verified true;
+        source observability_ready true;
+        source open_incidents 0;
+        source error_budget_percent 98;
+        source capacity_headroom_percent 41;
+        source latency_headroom_percent 37;
+        source dependency_health_percent 99;
+        source database_change false;
+        source migration_verified true;
+        source documentation_complete true;
+        source release_notes_complete true;
+    }
+
+    stage "Decision gates" {
+        let test_gate all_true(
+            unit_tests_passed,
+            integration_tests_passed,
+            acceptance_tests_passed,
+            failed_tests == 0
+        );
+
+        let quality_gate all_true(
+            quality_score >= 90,
+            coverage_percent >= 85,
+            lint_score >= 95
+        );
+
+        let security_gate all_true(
+            critical_findings == 0,
+            high_findings <= 2,
+            dependency_risk <= 25,
+            secrets_scan_passed
+        );
+
+        let operations_gate all_true(
+            open_incidents == 0,
+            error_budget_percent >= 90,
+            capacity_headroom_percent >= 25,
+            latency_headroom_percent >= 20,
+            dependency_health_percent >= 95
+        );
+
+        let recovery_gate all_true(
+            rollback_ready,
+            backup_verified,
+            observability_ready
+        );
+
+        let change_gate all_true(
+            change_approved,
+            release_window_open,
+            documentation_complete,
+            release_notes_complete
+        );
+
+        let migration_gate !database_change || migration_verified;
+
+        let release_authorized all_true(
+            build_complete,
+            test_gate,
+            quality_gate,
+            security_gate,
+            operations_gate,
+            recovery_gate,
+            change_gate,
+            migration_gate
+        );
+
+        let release_status if_else(
+            release_authorized,
+            "AUTHORIZED",
+            "REVIEW"
+        );
+
+        let release_score round(
+            average(
+                quality_score,
+                coverage_percent,
+                dependency_health_percent,
+                error_budget_percent,
+                100 - dependency_risk
+            ),
+            1
+        );
+
+        let quality_summary concat(
+            "QUALITY ",
+            string(quality_score),
+            " // COVERAGE ",
+            string(coverage_percent)
+        );
+
+        let security_summary concat(
+            "CRITICAL ",
+            string(critical_findings),
+            " // HIGH ",
+            string(high_findings)
+        );
+    }
+
+    stage "Input invariants" {
+        assert test_count > 0;
+        assert failed_tests >= 0;
+        assert quality_score >= 0 && quality_score <= 100;
+        assert coverage_percent >= 0 && coverage_percent <= 100;
+        assert lint_score >= 0 && lint_score <= 100;
+        assert critical_findings >= 0;
+        assert high_findings >= 0;
+        assert medium_findings >= 0;
+        assert dependency_risk >= 0 && dependency_risk <= 100;
+        assert error_budget_percent >= 0 && error_budget_percent <= 100;
+        assert capacity_headroom_percent >= 0 && capacity_headroom_percent <= 100;
+        assert latency_headroom_percent >= 0 && latency_headroom_percent <= 100;
+        assert dependency_health_percent >= 0 && dependency_health_percent <= 100;
+    }
+
+    stage "Gate results" {
+        when test_gate {
+            publish concat("TEST GATE // ", string(test_count), " TESTS PASSED");
+        } otherwise {
+            publish "TEST GATE // REVIEW";
+        }
+
+        when quality_gate {
+            publish quality_summary;
+        } otherwise {
+            publish "QUALITY GATE // REVIEW";
+        }
+
+        when security_gate {
+            publish security_summary;
+        } otherwise {
+            publish "SECURITY GATE // REVIEW";
+        }
+
+        when operations_gate {
+            publish "OPERATIONS GATE // READY";
+        } otherwise {
+            publish "OPERATIONS GATE // REVIEW";
+        }
+
+        when recovery_gate {
+            publish "RECOVERY GATE // READY";
+        } otherwise {
+            publish "RECOVERY GATE // REVIEW";
+        }
+
+        when change_gate {
+            publish "CHANGE GATE // APPROVED";
+        } otherwise {
+            publish "CHANGE GATE // REVIEW";
+        }
+
+        when migration_gate {
+            publish "MIGRATION GATE // CLEAR";
+        } otherwise {
+            publish "MIGRATION GATE // REVIEW";
+        }
+    }
+
+    stage "Release decision" {
+        when release_authorized {
+            publish concat(
+                "RELEASE // ",
+                release_status,
+                " // SCORE ",
+                string(release_score)
+            );
+        } otherwise {
+            request "release-review";
+            publish concat(
+                "RELEASE // REVIEW REQUIRED // SCORE ",
+                string(release_score)
+            );
+        }
+    }
+}

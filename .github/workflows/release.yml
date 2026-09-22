@@ -1,0 +1,187 @@
+# GHOST FIVE // VECTIS
+# Builds, verifies, tags, and publishes immutable VECTIS releases.
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, 'release:')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(
+              python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(data["project"]["version"])
+          PY
+            )"
+            TAG="v${VERSION}"
+
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "ERROR: release tag ${TAG} already exists"
+              exit 1
+            fi
+          fi
+
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved release tag: ${TAG}"
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m pip install -e .
+
+      - name: Quality gate
+        run: bash tools/quality-gate.sh
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Verify wheel in isolated environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m venv /tmp/vectis-release-smoke
+          WHEEL="$(find dist -maxdepth 1 -name 'vectis_lang-*.whl' -print -quit)"
+          test -n "$WHEEL"
+
+          /tmp/vectis-release-smoke/bin/python -m pip install "$WHEEL"
+
+          CLI=/tmp/vectis-release-smoke/bin/vectis
+          "$CLI" --version
+          "$CLI" doctor
+          "$CLI" builtins >/dev/null
+          "$CLI" capabilities >/dev/null
+          "$CLI" --help >/dev/null
+
+          cat >/tmp/vectis-release-lib.vectis <<'VECTIS'
+          function readiness_gate(readiness) {
+              return readiness.ready
+                  && readiness.score >= 90
+                  && all(readiness.checks);
+          }
+          VECTIS
+
+          cat >/tmp/vectis-release-smoke.vectis <<'VECTIS'
+          import "vectis-release-lib.vectis";
+
+          mission "Release package smoke test" {
+              stage "Inputs" {
+                  source readiness {
+                      ready: true,
+                      score: 96,
+                      checks: [true, true, true]
+                  };
+              }
+
+              stage "Decision" {
+                  let authorized readiness_gate(readiness);
+                  assert authorized, "Release package readiness gate failed";
+                  publish {
+                      status: if_else(authorized, "AUTHORIZED", "REVIEW"),
+                      score: readiness.score,
+                      check_count: size(readiness.checks),
+                      first_check: readiness.checks[0]
+                  };
+              }
+          }
+          VECTIS
+
+          "$CLI" check --details /tmp/vectis-release-smoke.vectis >/dev/null
+          "$CLI" modules /tmp/vectis-release-smoke.vectis >/tmp/vectis-release-modules.json
+          "$CLI" fingerprint /tmp/vectis-release-smoke.vectis >/tmp/vectis-release-fingerprint.txt
+          "$CLI" limits /tmp/vectis-release-smoke.vectis \
+            --max-nodes 50 \
+            --max-edges 100 \
+            --max-depth 50 >/dev/null
+          "$CLI" mission /tmp/vectis-release-smoke.vectis >/tmp/vectis-release-mission.txt
+          "$CLI" report /tmp/vectis-release-smoke.vectis \
+            --output /tmp/vectis-release-report.html
+
+          grep -q "STAGE          Inputs" /tmp/vectis-release-mission.txt
+          grep -q "STAGE          Decision" /tmp/vectis-release-mission.txt
+          grep -q "Execution Report" /tmp/vectis-release-report.html
+
+          /tmp/vectis-release-smoke/bin/python - <<'PY'
+          from importlib.resources import files
+
+          for asset_dir in ("studio_assets", "demo_assets"):
+              assets = files("vectis").joinpath(asset_dir)
+              for name in ("index.html", "styles.css", "app.js"):
+                  assert assets.joinpath(name).is_file(), f"{asset_dir}/{name}"
+          PY
+
+      - name: Create annotated release tag
+        if: github.ref_type != 'tag'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "VECTIS ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NOTES="docs/release/${TAG}.md"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/* --clobber
+            exit 0
+          fi
+
+          if [[ -f "${NOTES}" ]]; then
+            gh release create "${TAG}" dist/* \
+              --verify-tag \
+              --title "VECTIS ${TAG}" \
+              --notes-file "${NOTES}"
+          else
+            gh release create "${TAG}" dist/* \
+              --verify-tag \
+              --title "VECTIS ${TAG}" \
+              --generate-notes
+          fi

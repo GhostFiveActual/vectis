@@ -1,0 +1,12 @@
+// GHOST FIVE // VECTIS
+// Canonical language example: functions.
+mission "Functions" {
+    source raw_name "  Ghost Five  ";
+    let clean_name trim(raw_name);
+    let product concat(upper(clean_name), " // VECTIS");
+    let size length(product);
+
+    when size > 10 {
+        publish product;
+    }
+}

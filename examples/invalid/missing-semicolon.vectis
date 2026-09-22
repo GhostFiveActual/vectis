@@ -1,0 +1,5 @@
+// GHOST FIVE // VECTIS
+// Negative language fixture: missing semicolon.
+mission "Missing semicolon" {
+    publish report
+}

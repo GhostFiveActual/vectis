@@ -1,0 +1,112 @@
+<!doctype html>
+<!-- GHOST FIVE // VECTIS | Defines the VECTIS Studio application structure and accessible controls. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>VECTIS Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="VECTIS Studio navigation">
+      <div class="brand-mark" aria-hidden="true">V</div>
+      <button class="rail-button active" data-view="workspace" title="Workspace" aria-label="Workspace">⌘</button>
+      <button class="rail-button" data-view="functions" title="Built-ins" aria-label="Built-in functions">ƒ</button>
+      <div class="rail-spacer"></div>
+      <div class="version-pill" id="version-pill">DEV</div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">GHOST FIVE</div>
+          <h1>VECTIS <span>Mission Control</span></h1>
+          <p class="product-slogan">A language for turning what you intend to happen into a system that can prove how it will happen.</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-dot" id="server-dot"></span>
+          <span class="server-status" id="server-status">Connecting</span>
+          <button class="ghost-button" id="format-button" type="button">Format</button>
+          <button class="primary-button" id="run-button" type="button">Execute Mission <kbd>Ctrl↵</kbd></button>
+        </div>
+      </header>
+
+      <main class="main-grid" id="workspace-view">
+        <section class="panel editor-panel" aria-labelledby="editor-title">
+          <div class="panel-header">
+            <div>
+              <span class="panel-kicker">MISSION SOURCE</span>
+              <h2 id="editor-title">Mission Editor</h2>
+            </div>
+            <div class="toolbar">
+              <select id="example-select" aria-label="Load example"></select>
+              <button class="icon-button" id="check-button" type="button">Check</button>
+              <button class="icon-button" id="plan-button" type="button">Plan</button>
+            </div>
+          </div>
+          <div class="editor-shell">
+            <pre id="line-numbers" class="line-numbers" aria-hidden="true">1</pre>
+            <textarea id="source" spellcheck="false" aria-label="VECTIS source code"></textarea>
+          </div>
+          <div class="editor-footer">
+            <span id="cursor-status">Ln 1, Col 1</span>
+            <span>VECTIS</span>
+            <span>UTF-8</span>
+          </div>
+        </section>
+
+        <section class="panel insight-panel" aria-labelledby="insight-title">
+          <div class="panel-header compact">
+            <div>
+              <span class="panel-kicker">LIVE MISSION TELEMETRY</span>
+              <h2 id="insight-title">Execution Topology</h2>
+            </div>
+            <div class="run-state neutral" id="run-state">IDLE</div>
+          </div>
+
+          <div class="metric-grid">
+            <article><span>Nodes</span><strong id="metric-nodes">0</strong></article>
+            <article><span>Edges</span><strong id="metric-edges">0</strong></article>
+            <article><span>Executed</span><strong id="metric-executed">0</strong></article>
+            <article><span>Failures</span><strong id="metric-failures">0</strong></article>
+          </div>
+
+          <div class="graph-card">
+            <div class="subhead">
+              <h3>Execution Graph</h3>
+              <span id="graph-caption">Compile a mission to visualize the plan.</span>
+            </div>
+            <div class="graph-canvas" id="graph-canvas" tabindex="0" aria-label="Execution graph visualization"></div>
+          </div>
+        </section>
+
+        <section class="panel output-panel">
+          <div class="tabs" role="tablist" aria-label="VECTIS output panels">
+            <button class="tab active" data-tab="runtime" role="tab" type="button">Runtime</button>
+            <button class="tab" data-tab="diagnostics" role="tab" type="button">Diagnostics <span class="count" id="diag-count">0</span></button>
+            <button class="tab" data-tab="plan" role="tab" type="button">Plan JSON</button>
+            <button class="tab" data-tab="ast" role="tab" type="button">AST</button>
+          </div>
+          <div class="tab-content active" id="runtime-tab"></div>
+          <pre class="tab-content" id="diagnostics-tab" tabindex="0"></pre>
+          <pre class="tab-content" id="plan-tab" tabindex="0"></pre>
+          <pre class="tab-content" id="ast-tab" tabindex="0"></pre>
+        </section>
+      </main>
+
+      <main class="functions-view hidden" id="functions-view">
+        <section class="functions-hero">
+          <span class="panel-kicker">LANGUAGE REFERENCE</span>
+          <h2>Deterministic Built-in Functions</h2>
+          <p>Pure functions are evaluated inside the VECTIS expression engine. They perform no implicit filesystem, network, or process I/O.</p>
+        </section>
+        <section class="function-grid" id="function-grid"></section>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
