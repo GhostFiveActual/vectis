@@ -110,5 +110,114 @@ class ActionRegistryTests(unittest.TestCase):
         )
 
 
+    def test_contract_validates_input_and_result(self):
+        from vectis.action_contract import (
+            ActionContract,
+            ActionContractError,
+            ActionValueType,
+            FieldSchema,
+            ValueSchema,
+        )
+
+        contract = ActionContract(
+            operation="example.lookup",
+            capability="http",
+            description="Contract test operation.",
+            input_schema=ValueSchema(
+                ActionValueType.OBJECT,
+                fields=(
+                    FieldSchema(
+                        "id",
+                        ValueSchema(
+                            ActionValueType.STRING
+                        ),
+                    ),
+                ),
+                allow_extra_fields=False,
+            ),
+            result_schema=ValueSchema(
+                ActionValueType.BOOLEAN
+            ),
+        )
+        registry = ActionRegistry()
+        registry.register(
+            "example.lookup",
+            "http",
+            lambda _arguments: True,
+            contract=contract,
+        )
+
+        self.assertTrue(
+            registry.execute(
+                "example.lookup",
+                "http",
+                {"id": "42"},
+            )
+        )
+
+        with self.assertRaises(ActionContractError):
+            registry.execute(
+                "example.lookup",
+                "http",
+                {},
+            )
+
+        with self.assertRaises(ActionContractError):
+            registry.execute(
+                "example.lookup",
+                "http",
+                {"id": 42},
+            )
+
+    def test_contract_rejects_invalid_handler_result(self):
+        from vectis.action_contract import (
+            ActionContract,
+            ActionContractError,
+            ActionValueType,
+            ValueSchema,
+        )
+
+        contract = ActionContract(
+            operation="example.result",
+            capability="test",
+            description="Result contract test operation.",
+            input_schema=ValueSchema(
+                ActionValueType.OBJECT
+            ),
+            result_schema=ValueSchema(
+                ActionValueType.STRING
+            ),
+        )
+        registry = ActionRegistry()
+        registry.register(
+            "example.result",
+            "test",
+            lambda _arguments: 42,
+            contract=contract,
+        )
+
+        with self.assertRaises(ActionContractError):
+            registry.execute(
+                "example.result",
+                "test",
+                {},
+            )
+
+    def test_standard_adapter_registration_exposes_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ActionRegistry()
+            registry.register_filesystem(
+                FileSystemAdapter(Path(directory))
+            )
+            spec = registry.get(
+                "filesystem.read_text"
+            )
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.contract)
+            self.assertEqual(
+                spec.contract.result_schema.value_type.value,
+                "string",
+            )
+
 if __name__ == "__main__":
     unittest.main()

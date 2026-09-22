@@ -39,6 +39,11 @@ from vectis.ast import (
     UnaryExpression,
     WhenStatement,
 )
+from vectis.action_contract import (
+    ActionValueType,
+    ValueSchema,
+    standard_action_contract,
+)
 from vectis.diagnostic import (
     Diagnostic,
     DiagnosticCode,
@@ -412,10 +417,46 @@ class SemanticAnalyzer:
                         statement.arguments.span,
                     )
                 )
+
+            contract = standard_action_contract(
+                statement.operation
+            )
+            result_type = ValueType.UNKNOWN
+            if contract is not None:
+                if statement.capability != contract.capability:
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_ACTION_CONTRACT,
+                            (
+                                f"action {statement.operation!r} requires "
+                                f"capability {contract.capability!r}"
+                            ),
+                            statement.span,
+                        )
+                    )
+                if isinstance(
+                    statement.arguments,
+                    ObjectLiteral,
+                ):
+                    diagnostics.extend(
+                        self._validate_action_expression(
+                            statement.arguments,
+                            contract.input_schema,
+                            path=(
+                                f"{statement.operation} input"
+                            ),
+                        )
+                    )
+                result_type = (
+                    self._value_type_for_action_schema(
+                        contract.result_schema
+                    )
+                )
+
             diagnostics.extend(
                 self._declare(
                     statement.name,
-                    ValueType.UNKNOWN,
+                    result_type,
                     statement.span,
                 )
             )
@@ -652,6 +693,127 @@ class SemanticAnalyzer:
                 expression.span,
             )
         ]
+
+    def _value_type_for_action_schema(
+        self,
+        schema: ValueSchema,
+    ) -> ValueType:
+        mapping = {
+            ActionValueType.STRING: ValueType.STRING,
+            ActionValueType.NUMBER: ValueType.NUMBER,
+            ActionValueType.BOOLEAN: ValueType.BOOLEAN,
+            ActionValueType.LIST: ValueType.LIST,
+            ActionValueType.OBJECT: ValueType.OBJECT,
+            ActionValueType.ANY: ValueType.UNKNOWN,
+        }
+        return mapping[schema.value_type]
+
+    def _validate_action_expression(
+        self,
+        expression: Expression,
+        schema: ValueSchema,
+        *,
+        path: str,
+    ) -> list[Diagnostic]:
+        diagnostics: list[Diagnostic] = []
+        expected = self._value_type_for_action_schema(
+            schema
+        )
+        actual = self._infer_type(expression)
+
+        if (
+            expected is not ValueType.UNKNOWN
+            and actual is not ValueType.UNKNOWN
+            and actual is not expected
+        ):
+            return [
+                self._diagnostic(
+                    DiagnosticCode.SEM_ACTION_CONTRACT,
+                    (
+                        f"{path} must be "
+                        f"{schema.value_type.value}, "
+                        f"not {actual.value}"
+                    ),
+                    expression.span,
+                )
+            ]
+
+        if isinstance(expression, ListLiteral):
+            if schema.item is not None:
+                for index, item in enumerate(
+                    expression.items
+                ):
+                    diagnostics.extend(
+                        self._validate_action_expression(
+                            item,
+                            schema.item,
+                            path=f"{path}[{index}]",
+                        )
+                    )
+            return diagnostics
+
+        if isinstance(expression, ObjectLiteral):
+            fields = {
+                field.name: field
+                for field in schema.fields
+            }
+            entries = dict(expression.entries)
+
+            for field in schema.fields:
+                if (
+                    field.required
+                    and field.name not in entries
+                ):
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_ACTION_CONTRACT,
+                            (
+                                f"{path} requires field "
+                                f"{field.name!r}"
+                            ),
+                            expression.span,
+                        )
+                    )
+
+            if (
+                fields
+                and not schema.allow_extra_fields
+            ):
+                for name in sorted(
+                    set(entries) - set(fields)
+                ):
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_ACTION_CONTRACT,
+                            (
+                                f"{path} contains unsupported "
+                                f"field {name!r}"
+                            ),
+                            expression.span,
+                        )
+                    )
+
+            for name, item in expression.entries:
+                field = fields.get(name)
+                if field is not None:
+                    diagnostics.extend(
+                        self._validate_action_expression(
+                            item,
+                            field.schema,
+                            path=f"{path}.{name}",
+                        )
+                    )
+                elif schema.values is not None:
+                    diagnostics.extend(
+                        self._validate_action_expression(
+                            item,
+                            schema.values,
+                            path=f"{path}.{name}",
+                        )
+                    )
+            return diagnostics
+
+        return diagnostics
 
     def _infer_function_type(
         self,

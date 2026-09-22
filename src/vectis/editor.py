@@ -182,12 +182,30 @@ def hover_info(
     }
     action = actions.get(word)
     if action is not None:
+        input_schema = action["input"]
+        fields = input_schema.get("fields", [])
+        field_summary = ", ".join(
+            (
+                f'{field["name"]}: '
+                f'{field["schema"]["type"]}'
+                + (
+                    ""
+                    if field["required"]
+                    else "?"
+                )
+            )
+            for field in fields
+        )
+        result_type = action["result"]["type"]
         return {
             "contents": {
                 "kind": "markdown",
                 "value": (
                     f"**{word}** — standard VECTIS action\n\n"
-                    f'Requires capability **{action["capability"]}**. '
+                    f'{action["description"]}\n\n'
+                    f'Requires capability **{action["capability"]}**.\n\n'
+                    f"Input: `{field_summary}`\n\n"
+                    f"Result: `{result_type}`\n\n"
                     "The operation has no authority unless explicitly "
                     "registered and granted by the host."
                 ),

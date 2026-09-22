@@ -10,29 +10,25 @@ from typing import Callable
 from vectis.adapters.filesystem import FileSystemAdapter
 from vectis.adapters.http import HttpAdapter
 from vectis.adapters.process import ProcessAdapter
+from vectis.action_contract import (
+    ActionContract,
+    standard_action_contract,
+    standard_action_manifest,
+    validate_value,
+)
 from vectis.evaluator import Value, is_value
 
 
 ActionHandler = Callable[[dict[str, Value]], Value]
 
 
-STANDARD_ACTION_BINDINGS = (
-    ("filesystem.read_text", "filesystem"),
-    ("filesystem.write_text", "filesystem"),
-    ("process.run", "process"),
-    ("http.request", "http"),
-)
-
-
-def standard_action_manifest() -> tuple[dict[str, str], ...]:
-    """Describe standard operations without granting or registering them."""
-    return tuple(
-        {
-            "operation": operation,
-            "capability": capability,
-        }
-        for operation, capability in STANDARD_ACTION_BINDINGS
+STANDARD_ACTION_BINDINGS = tuple(
+    (
+        item["operation"],
+        item["capability"],
     )
+    for item in standard_action_manifest()
+)
 
 
 class ActionError(RuntimeError):
@@ -54,6 +50,7 @@ class ActionSpec:
     operation: str
     capability: str
     handler: ActionHandler
+    contract: ActionContract | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.operation, str) or not self.operation:
@@ -62,6 +59,22 @@ class ActionSpec:
             raise ValueError("ActionSpec.capability must be a non-empty string")
         if not callable(self.handler):
             raise TypeError("ActionSpec.handler must be callable")
+        if self.contract is not None:
+            if not isinstance(
+                self.contract,
+                ActionContract,
+            ):
+                raise TypeError(
+                    "ActionSpec.contract must be ActionContract or None"
+                )
+            if self.contract.operation != self.operation:
+                raise ValueError(
+                    "ActionSpec.contract operation must match registration"
+                )
+            if self.contract.capability != self.capability:
+                raise ValueError(
+                    "ActionSpec.contract capability must match registration"
+                )
 
 
 class ActionRegistry:
@@ -75,11 +88,14 @@ class ActionRegistry:
         operation: str,
         capability: str,
         handler: ActionHandler,
+        *,
+        contract: ActionContract | None = None,
     ) -> None:
         spec = ActionSpec(
             operation=operation,
             capability=capability,
             handler=handler,
+            contract=contract,
         )
         if operation in self._specs:
             raise ValueError(
@@ -92,17 +108,22 @@ class ActionRegistry:
             raise ValueError("action operation must be a non-empty string")
         return self._specs.get(operation)
 
-    def manifest(self) -> tuple[dict[str, str], ...]:
-        return tuple(
-            {
+    def manifest(self) -> tuple[dict[str, object], ...]:
+        items: list[dict[str, object]] = []
+        for spec in sorted(
+            self._specs.values(),
+            key=lambda item: item.operation,
+        ):
+            item: dict[str, object] = {
                 "operation": spec.operation,
                 "capability": spec.capability,
             }
-            for spec in sorted(
-                self._specs.values(),
-                key=lambda item: item.operation,
-            )
-        )
+            if spec.contract is not None:
+                item["contract"] = (
+                    spec.contract.to_dict()
+                )
+            items.append(item)
+        return tuple(items)
 
     def execute(
         self,
@@ -126,6 +147,12 @@ class ActionRegistry:
             raise ActionError(
                 f"Action operation {operation!r} requires object input"
             )
+        if spec.contract is not None:
+            validate_value(
+                spec.contract.input_schema,
+                arguments,
+                path=f"{operation} input",
+            )
         result = spec.handler(arguments)
         if not is_value(result):
             raise ActionError(
@@ -133,6 +160,12 @@ class ActionRegistry:
                     f"Action operation {operation!r} returned a value "
                     "outside the VECTIS value model"
                 )
+            )
+        if spec.contract is not None:
+            validate_value(
+                spec.contract.result_schema,
+                result,
+                path=f"{operation} result",
             )
         return result
 
@@ -173,11 +206,17 @@ class ActionRegistry:
             "filesystem.read_text",
             adapter.capability,
             read_text,
+            contract=standard_action_contract(
+                "filesystem.read_text"
+            ),
         )
         self.register(
             "filesystem.write_text",
             adapter.capability,
             write_text,
+            contract=standard_action_contract(
+                "filesystem.write_text"
+            ),
         )
 
     def register_process(
@@ -221,7 +260,7 @@ class ActionRegistry:
                 timeout=timeout,
             )
             return {
-                "argv": list(result.argv),
+                "argv": tuple(result.argv),
                 "returncode": result.returncode,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
@@ -231,6 +270,9 @@ class ActionRegistry:
             "process.run",
             adapter.capability,
             run,
+            contract=standard_action_contract(
+                "process.run"
+            ),
         )
 
     def register_http(
@@ -302,13 +344,13 @@ class ActionRegistry:
                 "url": response.url,
                 "status": response.status,
                 "reason": response.reason,
-                "headers": [
+                "headers": tuple(
                     {
                         "name": name,
                         "value": value,
                     }
                     for name, value in response.headers
-                ],
+                ),
                 "body": response.body.decode(
                     "utf-8",
                     errors="replace",
@@ -320,6 +362,9 @@ class ActionRegistry:
             "http.request",
             adapter.capability,
             request,
+            contract=standard_action_contract(
+                "http.request"
+            ),
         )
 
 

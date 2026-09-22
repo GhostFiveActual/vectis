@@ -52,6 +52,7 @@ class DiagnosticTests(unittest.TestCase):
                 "SEM004",
                 "SEM005",
                 "SEM006",
+                "SEM007",
                 "CAP001",
                 "CAP002",
             },
