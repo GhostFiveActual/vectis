@@ -2,6 +2,8 @@
 # Verifies the dependency-free VECTIS Language Server Protocol surface.
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 
 from vectis.formatter import format_program
@@ -28,6 +30,9 @@ class LanguageServerTests(unittest.TestCase):
         self.assertTrue(capabilities["documentFormattingProvider"])
         self.assertTrue(capabilities["hoverProvider"])
         self.assertTrue(capabilities["documentSymbolProvider"])
+        self.assertTrue(capabilities["definitionProvider"])
+        self.assertTrue(capabilities["referencesProvider"])
+        self.assertTrue(capabilities["renameProvider"])
         self.assertIn("completionProvider", capabilities)
 
     def test_open_publishes_parser_diagnostic(self) -> None:
@@ -157,6 +162,246 @@ class LanguageServerTests(unittest.TestCase):
         self.assertNotIn(self.uri, self.server.documents)
         self.assertEqual(replies[0]["params"]["diagnostics"], [])
 
+
+    def test_unsaved_import_overlay_updates_importer_diagnostics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "library.vectis"
+            entry = root / "main.vectis"
+
+            library.write_text(
+                (
+                    "function stale(value) {\n"
+                    "    return value;\n"
+                    "}\n"
+                ),
+                encoding="utf-8",
+            )
+            entry_source = (
+                'import "library.vectis";\n'
+                'mission "Overlay" {\n'
+                "    let result ready(96);\n"
+                "    publish result;\n"
+                "}\n"
+            )
+            entry.write_text(
+                entry_source,
+                encoding="utf-8",
+            )
+
+            library_uri = (
+                library.resolve().as_uri()
+            )
+            entry_uri = (
+                entry.resolve().as_uri()
+            )
+
+            self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": library_uri,
+                            "text": (
+                                "function ready(value) {\n"
+                                "    return value >= 90;\n"
+                                "}\n"
+                            ),
+                        }
+                    },
+                }
+            )
+            replies = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": entry_uri,
+                            "text": entry_source,
+                        }
+                    },
+                }
+            )
+
+            entry_diagnostics = next(
+                item["params"]["diagnostics"]
+                for item in replies
+                if item["params"]["uri"]
+                == entry_uri
+            )
+            self.assertEqual(
+                entry_diagnostics,
+                [],
+            )
+
+            changed = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {
+                            "uri": library_uri
+                        },
+                        "contentChanges": [
+                            {
+                                "text": (
+                                    "function denied(value) {\n"
+                                    "    return value >= 90;\n"
+                                    "}\n"
+                                )
+                            }
+                        ],
+                    },
+                }
+            )
+
+            importer = next(
+                item["params"]["diagnostics"]
+                for item in changed
+                if item["params"]["uri"]
+                == entry_uri
+            )
+            self.assertTrue(importer)
+
+    def test_definition_references_and_rename_cross_import(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "library.vectis"
+            entry = root / "main.vectis"
+
+            library_source = (
+                "function ready(value) {\n"
+                "    return value >= 90;\n"
+                "}\n"
+            )
+            entry_source = (
+                'import "library.vectis";\n'
+                'mission "Navigation" {\n'
+                "    let result ready(96);\n"
+                "    publish result;\n"
+                "}\n"
+            )
+            library.write_text(
+                library_source,
+                encoding="utf-8",
+            )
+            entry.write_text(
+                entry_source,
+                encoding="utf-8",
+            )
+
+            library_uri = (
+                library.resolve().as_uri()
+            )
+            entry_uri = (
+                entry.resolve().as_uri()
+            )
+            self.server.documents[
+                library_uri
+            ] = library_source
+            self.server.documents[
+                entry_uri
+            ] = entry_source
+
+            line = 2
+            character = (
+                entry_source.splitlines()[
+                    line
+                ].index("ready")
+                + 2
+            )
+
+            definition = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 20,
+                    "method": (
+                        "textDocument/definition"
+                    ),
+                    "params": {
+                        "textDocument": {
+                            "uri": entry_uri
+                        },
+                        "position": {
+                            "line": line,
+                            "character": character,
+                        },
+                    },
+                }
+            )[0]["result"]
+            self.assertEqual(
+                definition["uri"],
+                library_uri,
+            )
+
+            references = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 21,
+                    "method": (
+                        "textDocument/references"
+                    ),
+                    "params": {
+                        "textDocument": {
+                            "uri": entry_uri
+                        },
+                        "position": {
+                            "line": line,
+                            "character": character,
+                        },
+                        "context": {
+                            "includeDeclaration": True
+                        },
+                    },
+                }
+            )[0]["result"]
+            self.assertEqual(
+                len(references),
+                2,
+            )
+
+            rename = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 22,
+                    "method": (
+                        "textDocument/rename"
+                    ),
+                    "params": {
+                        "textDocument": {
+                            "uri": entry_uri
+                        },
+                        "position": {
+                            "line": line,
+                            "character": character,
+                        },
+                        "newName": "approved",
+                    },
+                }
+            )[0]["result"]
+            self.assertEqual(
+                set(rename["changes"]),
+                {
+                    entry_uri,
+                    library_uri,
+                },
+            )
+            self.assertTrue(
+                all(
+                    edit["newText"]
+                    == "approved"
+                    for edits in rename[
+                        "changes"
+                    ].values()
+                    for edit in edits
+                )
+            )
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,7 +40,7 @@ External authority remains explicit regardless of syntax growth.
 
 ## Mission Control
 
-The dependency-free Language Server Protocol surface provides editor diagnostics and canonical formatting through the same compiler used by the CLI. Product direction includes source-aware navigation, completion, hover information, unsaved multi-file overlays, deeper graph inspection, source span synchronization, execution history, capability configuration, templates, and module browsing.
+The dependency-free Language Server Protocol surface provides editor diagnostics and canonical formatting through the same compiler used by the CLI. User-defined pure functions support cross-file definition, references, and rename through an overlay-aware module workspace, so unsaved imported buffers participate in semantic diagnostics without stale disk substitution. Product direction includes signature help, semantic tokens, mission-local value navigation, deeper graph inspection, source span synchronization, execution history, capability configuration, templates, and module browsing.
 
 ## Compatibility
 
