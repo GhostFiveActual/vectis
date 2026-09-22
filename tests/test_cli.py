@@ -77,6 +77,7 @@ class CliTests(unittest.TestCase):
             "plan",
             "inspect",
             "run",
+            "receipt",
             "mission",
             "audit",
             "fingerprint",
@@ -592,6 +593,85 @@ class CliTests(unittest.TestCase):
             read["result"]["type"],
             "string",
         )
+
+    def test_receipt_command_emits_value_free_provenance(
+        self,
+    ) -> None:
+        sensitive = "SENSITIVE-CLI-RECEIPT"
+        source = self.source_file(
+            'mission "Receipt" { '
+            f'source token "{sensitive}"; '
+            'publish token; }'
+        )
+
+        code, stdout, stderr = self.invoke(
+            ["receipt", source]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertNotIn(sensitive, stdout)
+        payload = json.loads(stdout)
+        self.assertEqual(
+            payload["schema"],
+            "vectis.execution-receipt/v1",
+        )
+        self.assertEqual(
+            len(payload["plan"]["fingerprint"]),
+            64,
+        )
+        self.assertFalse(
+            payload["provenance"][
+                "runtime_values_recorded"
+            ]
+        )
+
+    def test_run_can_write_value_free_receipt(
+        self,
+    ) -> None:
+        sensitive = "SENSITIVE-RUN-RECEIPT"
+        source = self.source_file(
+            'mission "Receipt" { '
+            f'source token "{sensitive}"; '
+            'publish token; }'
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_path = (
+                Path(directory)
+                / "receipt.json"
+            )
+            code, stdout, stderr = self.invoke(
+                [
+                    "run",
+                    "--receipt",
+                    str(receipt_path),
+                    source,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            runtime_payload = json.loads(stdout)
+            self.assertTrue(runtime_payload["success"])
+
+            receipt_text = receipt_path.read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn(
+                sensitive,
+                receipt_text,
+            )
+            receipt = json.loads(receipt_text)
+            self.assertEqual(
+                receipt["schema"],
+                "vectis.execution-receipt/v1",
+            )
+            self.assertFalse(
+                receipt["provenance"][
+                    "runtime_values_recorded"
+                ]
+            )
 
 if __name__ == "__main__":
     unittest.main()
