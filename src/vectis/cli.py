@@ -43,6 +43,10 @@ from vectis.product import (
     plan_audit,
     test_project,
 )
+from vectis.receipt import (
+    execution_receipt,
+    write_execution_receipt,
+)
 from vectis.runtime import Runtime
 
 
@@ -276,6 +280,74 @@ def command_inspect(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _receipt_authority(
+    capabilities: CapabilityRegistry | None,
+    actions: object | None,
+) -> tuple[tuple[str, ...], tuple[dict[str, str], ...]]:
+    """Return value-free authority evidence for a receipt."""
+    granted = (
+        tuple(
+            sorted(
+                capabilities.capabilities
+            )
+        )
+        if capabilities is not None
+        else ()
+    )
+
+    if actions is None:
+        return granted, ()
+
+    manifest = getattr(
+        actions,
+        "manifest",
+        None,
+    )
+    if not callable(manifest):
+        return granted, ()
+
+    registered: list[dict[str, str]] = []
+    for item in manifest():
+        operation = item.get("operation")
+        capability = item.get("capability")
+        if (
+            isinstance(operation, str)
+            and operation
+            and isinstance(capability, str)
+            and capability
+        ):
+            registered.append(
+                {
+                    "operation": operation,
+                    "capability": capability,
+                }
+            )
+
+    return granted, tuple(registered)
+
+
+def _execution_receipt(
+    *,
+    graph: object,
+    result: object,
+    source_name: str,
+    capabilities: CapabilityRegistry | None,
+    actions: object | None,
+) -> dict[str, object]:
+    """Build one CLI receipt without runtime values."""
+    granted, registered = _receipt_authority(
+        capabilities,
+        actions,
+    )
+    return execution_receipt(
+        graph,
+        result,
+        source_name=source_name,
+        granted_capabilities=granted,
+        registered_actions=registered,
+    )
+
+
 def command_run(args: argparse.Namespace) -> int:
     """Compile and execute one VECTIS mission."""
     graph = _compile_source(args.source)
@@ -291,7 +363,55 @@ def command_run(args: argparse.Namespace) -> int:
         capabilities=capabilities,
         actions=actions,
     ).execute()
+
+    if args.receipt:
+        write_execution_receipt(
+            args.receipt,
+            _execution_receipt(
+                graph=graph,
+                result=result,
+                source_name=args.source,
+                capabilities=capabilities,
+                actions=actions,
+            ),
+        )
+
     _print_json(result)
+    return 0 if result.success else 1
+
+
+def command_receipt(args: argparse.Namespace) -> int:
+    """Execute one mission and emit value-free provenance."""
+    graph = _compile_source(args.source)
+    if graph is None:
+        return 1
+
+    capabilities, actions = _runtime_authority(
+        args
+    )
+    result = Runtime(
+        graph,
+        dry_run=args.dry_run,
+        capabilities=capabilities,
+        actions=actions,
+    ).execute()
+    receipt = _execution_receipt(
+        graph=graph,
+        result=result,
+        source_name=args.source,
+        capabilities=capabilities,
+        actions=actions,
+    )
+
+    if args.output:
+        destination = write_execution_receipt(
+            args.output,
+            receipt,
+        )
+        print(destination)
+    else:
+        _print_json(receipt)
+
     return 0 if result.success else 1
 
 
@@ -1144,7 +1264,52 @@ def build_parser() -> argparse.ArgumentParser:
             "no profile is discovered automatically"
         ),
     )
+    run_parser.add_argument(
+        "--receipt",
+        metavar="FILE",
+        help=(
+            "write a value-free execution receipt "
+            "without changing run JSON output"
+        ),
+    )
     run_parser.set_defaults(handler=command_run)
+
+    receipt_parser = commands.add_parser(
+        "receipt",
+        help="execute source and emit a value-free execution receipt",
+    )
+    _add_source_argument(receipt_parser)
+    receipt_parser.add_argument(
+        "--output",
+        metavar="FILE",
+        help="write receipt JSON to FILE instead of standard output",
+    )
+    receipt_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "record deterministic scheduling without "
+            "invoking handlers"
+        ),
+    )
+    receipt_parser.add_argument(
+        "--capability",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="grant a named runtime capability; may be repeated",
+    )
+    receipt_parser.add_argument(
+        "--actions-config",
+        metavar="FILE",
+        help=(
+            "explicit TOML action authority profile; "
+            "no profile is discovered automatically"
+        ),
+    )
+    receipt_parser.set_defaults(
+        handler=command_receipt
+    )
 
     mission_parser = commands.add_parser(
         "mission",
