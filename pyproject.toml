@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vectis-lang"
-version = "0.7.0"
+version = "0.8.0"
 description = "Deterministic automation language for inspectable execution plans and explicit authority"
 readme = "README.md"
 license = "Apache-2.0"

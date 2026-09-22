@@ -10,6 +10,22 @@ A language for turning what you intend to happen into a system that can prove ho
 
 # VECTIS Release Record
 
+## 0.8.0
+
+### Editor integration and clean canonical baseline
+
+| Area | Release state |
+| --- | --- |
+| Language server | `vectis lsp` provides a dependency-free Language Server Protocol endpoint over standard input/output. |
+| Diagnostics | Editors receive syntax and semantic diagnostics from the same VECTIS compiler used by the CLI. |
+| Formatting | Whole-document formatting uses the canonical VECTIS formatter rather than a separate editor implementation. |
+| Completion | Completion items are generated from language keywords, deterministic built-ins, and the standard action registry. |
+| Hover | Keyword, built-in, and standard-action hover information comes from shared language and registry metadata. |
+| Symbols | Document symbols are derived from the typed AST and expose functions, missions, stages, declarations, and actions. |
+| Modules | Saved imported files are validated through the project-bounded module loader; unsaved imported buffers remain explicitly syntax-only until overlay resolution is available. |
+| Packaging | The supported Python matrix remains 3.11 through 3.14 and release verification includes isolated-wheel CLI and LSP protocol smoke tests. |
+| Repository | The canonical public repository begins this release line from a parentless root commit containing the audited VECTIS tree only. |
+| Compatibility | The language and runtime contracts from 0.7 remain compatible; 0.8 adds editor-facing tooling without broadening runtime authority. |
 ## 0.7.0
 
 ### Operator action profiles

@@ -32,6 +32,7 @@ Install the wheel into an isolated environment outside the source tree, then ver
 ```bash
 vectis version
 vectis doctor
+vectis lsp --help
 vectis check examples/showcase/full-release-assurance.vectis
 vectis check examples/valid/pure-functions.vectis
 vectis check examples/valid/structured-syntax.vectis

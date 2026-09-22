@@ -7,7 +7,7 @@
 
 **A language for turning what you intend to happen into a system that can prove how it will happen.**
 
-<kbd>0.7.0</kbd> &nbsp; <kbd>PYTHON 3.11 TO 3.14</kbd> &nbsp; <kbd>MISSION CONTROL</kbd>
+<kbd>0.8.0</kbd> &nbsp; <kbd>PYTHON 3.11 TO 3.14</kbd> &nbsp; <kbd>MISSION CONTROL</kbd>
 
 </div>
 <!-- ghost-five-brand:end -->
