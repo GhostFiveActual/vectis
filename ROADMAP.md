@@ -32,9 +32,9 @@ Explicit action statements bind structured results while naming both the externa
 
 The standard action registry can bind the bounded filesystem, process, and HTTP adapters without giving pure expressions ambient authority. CLI action profiles make those bindings available through an explicitly selected TOML file with filesystem roots, process executable allowlists, process environment keys, timeout bounds, and HTTP hostname allowlists.
 
-Typed operation schemas and action result contracts provide static validation where operation structure is visible and runtime validation at the action boundary. Execution receipts connect runtime state to the deterministic plan fingerprint while omitting runtime values and local authority configuration.
+Typed operation schemas and action result contracts provide static validation where operation structure is visible and runtime validation at the action boundary. Execution receipts connect runtime state to the deterministic plan fingerprint while omitting runtime values and local authority configuration. Action profile shape attestation gives explicit profiles a deterministic SHA-256 identity without persisting secret environment values in receipts.
 
-Further action work includes richer dry run previews, retry policy with deterministic planning semantics, and cryptographic profile attestation.
+Further action work includes richer dry run previews, retry policy with deterministic planning semantics, and signed attestations for deployments that require an external trust anchor.
 
 External authority remains explicit regardless of syntax growth.
 

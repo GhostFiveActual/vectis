@@ -673,5 +673,127 @@ class CliTests(unittest.TestCase):
                 ]
             )
 
+    def test_actions_config_exposes_profile_attestation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = (
+                Path(sys.executable)
+                .resolve()
+                .as_posix()
+            )
+            profile = root / "actions.toml"
+            profile.write_text(
+                (
+                    "# GHOST FIVE // VECTIS\n"
+                    "# Profile attestation CLI test.\n"
+                    "[actions.process]\n"
+                    "default_timeout = 5\n"
+                    "max_timeout = 10\n"
+                    "\n"
+                    "[actions.process.executables]\n"
+                    f'python = "{executable}"\n'
+                    "\n"
+                    "[actions.process.environment]\n"
+                    'VECTIS_SECRET = "DO-NOT-PERSIST"\n'
+                ),
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "actions",
+                    "--config",
+                    str(profile),
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertNotIn(
+                "DO-NOT-PERSIST",
+                stdout,
+            )
+            payload = json.loads(stdout)
+            attestation = payload[
+                "attestation"
+            ]
+            self.assertEqual(
+                attestation["algorithm"],
+                "sha256",
+            )
+            self.assertEqual(
+                attestation["scope"],
+                "authority-shape",
+            )
+            self.assertEqual(
+                len(attestation["fingerprint"]),
+                64,
+            )
+
+    def test_receipt_records_selected_profile_attestation(
+        self,
+    ) -> None:
+        source = self.source_file(
+            'mission "Receipt" { '
+            'source ready true; '
+            'publish ready; }'
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = (
+                Path(sys.executable)
+                .resolve()
+                .as_posix()
+            )
+            profile = root / "actions.toml"
+            profile.write_text(
+                (
+                    "# GHOST FIVE // VECTIS\n"
+                    "# Profile attestation receipt test.\n"
+                    "[actions.process.executables]\n"
+                    f'python = "{executable}"\n'
+                    "\n"
+                    "[actions.process.environment]\n"
+                    'VECTIS_SECRET = "DO-NOT-PERSIST"\n'
+                ),
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "receipt",
+                    "--actions-config",
+                    str(profile),
+                    source,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertNotIn(
+                "DO-NOT-PERSIST",
+                stdout,
+            )
+            receipt = json.loads(stdout)
+            attestation = receipt["provenance"][
+                "action_profile_attestation"
+            ]
+            self.assertEqual(
+                attestation["source"],
+                "actions.toml",
+            )
+            self.assertEqual(
+                len(attestation["fingerprint"]),
+                64,
+            )
+            self.assertFalse(
+                attestation[
+                    "secret_values_attested"
+                ]
+            )
+
 if __name__ == "__main__":
     unittest.main()
