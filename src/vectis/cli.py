@@ -43,6 +43,9 @@ from vectis.product import (
     plan_audit,
     test_project,
 )
+from vectis.profile_attestation import (
+    action_profile_attestation,
+)
 from vectis.receipt import (
     execution_receipt,
     write_execution_receipt,
@@ -152,20 +155,32 @@ def _capability_registry(
     return registry
 
 
-def _runtime_authority(
+def _selected_action_profile(
     args: argparse.Namespace,
 ):
-    """Resolve explicit CLI capability grants and one selected action profile."""
+    """Load the explicitly selected action profile once."""
     profile_path = getattr(
         args,
         "actions_config",
         None,
     )
-    profile = (
+    return (
         load_action_profile(profile_path)
         if profile_path
         else None
     )
+
+
+def _runtime_authority(
+    args: argparse.Namespace,
+    *,
+    profile=None,
+):
+    """Resolve explicit CLI capability grants and one selected action profile."""
+    if profile is None:
+        profile = _selected_action_profile(
+            args
+        )
     names = [
         *(
             profile.capabilities
@@ -202,6 +217,11 @@ def command_actions(args: argparse.Namespace) -> int:
         {
             "configured": True,
             **profile_manifest(profile),
+            "attestation": (
+                action_profile_attestation(
+                    profile
+                )
+            ),
         }
     )
     return 0
@@ -333,6 +353,7 @@ def _execution_receipt(
     source_name: str,
     capabilities: CapabilityRegistry | None,
     actions: object | None,
+    selected_profile=None,
 ) -> dict[str, object]:
     """Build one CLI receipt without runtime values."""
     granted, registered = _receipt_authority(
@@ -345,6 +366,13 @@ def _execution_receipt(
         source_name=source_name,
         granted_capabilities=granted,
         registered_actions=registered,
+        action_profile_attestation=(
+            action_profile_attestation(
+                selected_profile
+            )
+            if selected_profile is not None
+            else None
+        ),
     )
 
 
@@ -354,8 +382,12 @@ def command_run(args: argparse.Namespace) -> int:
     if graph is None:
         return 1
 
+    selected_profile = (
+        _selected_action_profile(args)
+    )
     capabilities, actions = _runtime_authority(
-        args
+        args,
+        profile=selected_profile,
     )
     result = Runtime(
         graph,
@@ -373,6 +405,7 @@ def command_run(args: argparse.Namespace) -> int:
                 source_name=args.source,
                 capabilities=capabilities,
                 actions=actions,
+                selected_profile=selected_profile,
             ),
         )
 
@@ -386,8 +419,12 @@ def command_receipt(args: argparse.Namespace) -> int:
     if graph is None:
         return 1
 
+    selected_profile = (
+        _selected_action_profile(args)
+    )
     capabilities, actions = _runtime_authority(
-        args
+        args,
+        profile=selected_profile,
     )
     result = Runtime(
         graph,
@@ -401,6 +438,7 @@ def command_receipt(args: argparse.Namespace) -> int:
         source_name=args.source,
         capabilities=capabilities,
         actions=actions,
+        selected_profile=selected_profile,
     )
 
     if args.output:

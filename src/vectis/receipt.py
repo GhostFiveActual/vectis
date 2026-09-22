@@ -29,6 +29,7 @@ def execution_receipt(
     source_name: str,
     granted_capabilities: Iterable[str] = (),
     registered_actions: Iterable[Mapping[str, object]] = (),
+    action_profile_attestation: Mapping[str, object] | None = None,
     recorded_at: str | None = None,
 ) -> dict[str, object]:
     """Build one value-free execution receipt."""
@@ -85,6 +86,21 @@ def execution_receipt(
         )
     )
 
+    provenance: dict[str, object] = {
+        "vectis_version": __version__,
+        "source": _safe_source_name(source_name),
+        "granted_capabilities": capabilities,
+        "registered_actions": action_records,
+        "runtime_values_recorded": False,
+    }
+
+    if action_profile_attestation is not None:
+        provenance[
+            "action_profile_attestation"
+        ] = _safe_profile_attestation(
+            action_profile_attestation
+        )
+
     return {
         "schema": RECEIPT_SCHEMA,
         "plan": {
@@ -114,13 +130,7 @@ def execution_receipt(
                 for failure in result.failures
             ],
         },
-        "provenance": {
-            "vectis_version": __version__,
-            "source": _safe_source_name(source_name),
-            "granted_capabilities": capabilities,
-            "registered_actions": action_records,
-            "runtime_values_recorded": False,
-        },
+        "provenance": provenance,
         "evidence": {
             "recorded_at": timestamp,
         },
@@ -150,6 +160,66 @@ def write_execution_receipt(
         encoding="utf-8",
     )
     return destination
+
+
+def _safe_profile_attestation(
+    attestation: Mapping[str, object],
+) -> dict[str, object]:
+    """Copy only receipt-safe profile attestation fields."""
+    if not isinstance(attestation, Mapping):
+        raise TypeError(
+            "action_profile_attestation must be a mapping"
+        )
+
+    schema = attestation.get("schema")
+    algorithm = attestation.get("algorithm")
+    scope = attestation.get("scope")
+    fingerprint = attestation.get("fingerprint")
+    source = attestation.get("source")
+    secret_values = attestation.get(
+        "secret_values_attested"
+    )
+
+    if not isinstance(schema, str) or not schema:
+        raise ValueError(
+            "profile attestation schema must be a non-empty string"
+        )
+    if algorithm != "sha256":
+        raise ValueError(
+            "profile attestation algorithm must be sha256"
+        )
+    if scope != "authority-shape":
+        raise ValueError(
+            "profile attestation scope must be authority-shape"
+        )
+    if (
+        not isinstance(fingerprint, str)
+        or len(fingerprint) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in fingerprint
+        )
+    ):
+        raise ValueError(
+            "profile attestation fingerprint must be 64 lowercase hex characters"
+        )
+    if not isinstance(source, str) or not source:
+        raise ValueError(
+            "profile attestation source must be a non-empty string"
+        )
+    if secret_values is not False:
+        raise ValueError(
+            "profile attestation must not claim secret value coverage"
+        )
+
+    return {
+        "schema": schema,
+        "algorithm": algorithm,
+        "scope": scope,
+        "fingerprint": fingerprint,
+        "source": Path(source).name,
+        "secret_values_attested": False,
+    }
 
 
 def _safe_source_name(source_name: str) -> str:

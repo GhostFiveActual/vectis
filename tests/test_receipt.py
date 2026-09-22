@@ -207,5 +207,51 @@ class ExecutionReceiptTests(unittest.TestCase):
             )
 
 
+    def test_receipt_accepts_safe_profile_attestation(
+        self,
+    ) -> None:
+        graph = self.compile(
+            'mission "Receipt" { '
+            'source ready true; '
+            'publish ready; }'
+        )
+        result = Runtime(graph).execute()
+
+        receipt = execution_receipt(
+            graph,
+            result,
+            source_name="mission.vectis",
+            action_profile_attestation={
+                "schema": (
+                    "vectis.action-profile-attestation/v1"
+                ),
+                "algorithm": "sha256",
+                "scope": "authority-shape",
+                "fingerprint": "a" * 64,
+                "source": (
+                    "/private/path/actions.toml"
+                ),
+                "secret_values_attested": False,
+                "ignored": "DO-NOT-PERSIST",
+            },
+            recorded_at="2026-09-22T17:00:00Z",
+        )
+
+        evidence = receipt["provenance"][
+            "action_profile_attestation"
+        ]
+        self.assertEqual(
+            evidence["source"],
+            "actions.toml",
+        )
+        self.assertEqual(
+            evidence["fingerprint"],
+            "a" * 64,
+        )
+        self.assertNotIn(
+            "DO-NOT-PERSIST",
+            str(receipt),
+        )
+
 if __name__ == "__main__":
     unittest.main()
