@@ -5,39 +5,37 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
+import re
 import sys
 from typing import BinaryIO
-from urllib.parse import unquote, urlparse
 
 from vectis import __version__
-from vectis.ast import ImportStatement
 from vectis.compiler import compile_program
 from vectis.diagnostic import Diagnostic, DiagnosticError
 from vectis.editor import completion_items, document_symbols, hover_info
 from vectis.formatter import format_program
-from vectis.modules import load_program_file
+from vectis.lsp_workspace import (
+    function_definition,
+    function_references,
+    function_rename,
+    load_workspace_program,
+    navigation_workspace,
+    overlay_map,
+    uri_path,
+)
 from vectis.parser import parse
 
 
 _JSON_RPC_VERSION = "2.0"
 _LSP_ERROR_METHOD_NOT_FOUND = -32601
+_LSP_ERROR_INVALID_PARAMS = -32602
 _LSP_ERROR_INTERNAL = -32603
 
 
 def _uri_path(uri: str) -> Path | None:
-    """Convert one file URI into a local path when possible."""
-    parsed = urlparse(uri)
-    if parsed.scheme != "file":
-        return None
-
-    path = unquote(parsed.path)
-    if parsed.netloc:
-        path = f"//{parsed.netloc}{path}"
-    if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
-        path = path[1:]
-    return Path(path)
+    """Compatibility wrapper around the workspace URI resolver."""
+    return uri_path(uri)
 
 
 def _lsp_diagnostic(diagnostic: Diagnostic) -> dict[str, object]:
@@ -105,20 +103,19 @@ class LanguageServer:
     def _diagnostics(self, uri: str, source: str) -> list[dict[str, object]]:
         file = uri
         try:
-            program = parse(source, file=file)
-
             path = _uri_path(uri)
-            has_imports = any(
-                isinstance(statement, ImportStatement)
-                for statement in program.statements
-            )
-
-            if path is not None and path.is_file():
-                disk_source = path.read_text(encoding="utf-8")
-                if disk_source == source:
-                    program = load_program_file(path).program
-                elif has_imports:
-                    return []
+            if path is None:
+                program = parse(
+                    source,
+                    file=file,
+                )
+            else:
+                program = load_workspace_program(
+                    path,
+                    overlays=overlay_map(
+                        self.documents
+                    ),
+                ).program
 
             result = compile_program(program)
             return [
@@ -149,6 +146,30 @@ class LanguageServer:
                 "uri": uri,
                 "diagnostics": self._diagnostics(uri, source),
             },
+        )
+
+    def _publish_open_diagnostics(
+        self,
+    ) -> list[dict[str, object]]:
+        """Publish diagnostics for every open document deterministically."""
+        return [
+            self._publish_diagnostics(uri)
+            for uri in sorted(
+                self.documents
+            )
+        ]
+
+    def _navigation_workspace(
+        self,
+        uri: str,
+    ):
+        """Resolve the widest open workspace containing one document."""
+        path = _uri_path(uri)
+        if path is None:
+            return None
+        return navigation_workspace(
+            path,
+            documents=self.documents,
         )
 
     def _format(self, uri: str) -> list[dict[str, object]]:
@@ -206,6 +227,9 @@ class LanguageServer:
                             },
                             "hoverProvider": True,
                             "documentSymbolProvider": True,
+                            "definitionProvider": True,
+                            "referencesProvider": True,
+                            "renameProvider": True,
                         },
                         "serverInfo": {
                             "name": "vectis",
@@ -233,7 +257,7 @@ class LanguageServer:
                 text = document.get("text")
                 if isinstance(uri, str) and isinstance(text, str):
                     self.documents[uri] = text
-                    return [self._publish_diagnostics(uri)]
+                    return self._publish_open_diagnostics()
             return []
 
         if method == "textDocument/didChange":
@@ -250,7 +274,7 @@ class LanguageServer:
                     text = latest.get("text")
                     if isinstance(text, str):
                         self.documents[uri] = text
-                        return [self._publish_diagnostics(uri)]
+                        return self._publish_open_diagnostics()
             return []
 
         if method == "textDocument/didSave":
@@ -261,7 +285,7 @@ class LanguageServer:
                     text = params.get("text")
                     if isinstance(text, str):
                         self.documents[uri] = text
-                    return [self._publish_diagnostics(uri)]
+                    return self._publish_open_diagnostics()
             return []
 
         if method == "textDocument/didClose":
@@ -274,7 +298,8 @@ class LanguageServer:
                         _notification(
                             "textDocument/publishDiagnostics",
                             {"uri": uri, "diagnostics": []},
-                        )
+                        ),
+                        *self._publish_open_diagnostics(),
                     ]
             return []
 
@@ -355,6 +380,229 @@ class LanguageServer:
                 except DiagnosticError:
                     symbols = []
             return [_response(message_id, symbols)]
+
+        if method == "textDocument/definition":
+            document = params.get("textDocument")
+            position = params.get("position")
+            uri = (
+                document.get("uri")
+                if isinstance(document, dict)
+                else None
+            )
+            result = None
+            if (
+                isinstance(uri, str)
+                and isinstance(position, dict)
+            ):
+                line = position.get("line")
+                character = position.get(
+                    "character"
+                )
+                path = _uri_path(uri)
+                if (
+                    path is not None
+                    and isinstance(line, int)
+                    and isinstance(
+                        character,
+                        int,
+                    )
+                ):
+                    try:
+                        workspace = (
+                            self._navigation_workspace(
+                                uri
+                            )
+                        )
+                        if workspace is not None:
+                            result = (
+                                function_definition(
+                                    workspace,
+                                    path=path,
+                                    line=line,
+                                    character=character,
+                                )
+                            )
+                    except (
+                        DiagnosticError,
+                        OSError,
+                        UnicodeError,
+                        ValueError,
+                    ):
+                        result = None
+            return [
+                _response(
+                    message_id,
+                    result,
+                )
+            ]
+
+        if method == "textDocument/references":
+            document = params.get("textDocument")
+            position = params.get("position")
+            context = params.get("context")
+            uri = (
+                document.get("uri")
+                if isinstance(document, dict)
+                else None
+            )
+            result: list[
+                dict[str, object]
+            ] = []
+            if (
+                isinstance(uri, str)
+                and isinstance(position, dict)
+            ):
+                line = position.get("line")
+                character = position.get(
+                    "character"
+                )
+                path = _uri_path(uri)
+                include_declaration = (
+                    bool(
+                        context.get(
+                            "includeDeclaration",
+                            False,
+                        )
+                    )
+                    if isinstance(
+                        context,
+                        dict,
+                    )
+                    else False
+                )
+                if (
+                    path is not None
+                    and isinstance(line, int)
+                    and isinstance(
+                        character,
+                        int,
+                    )
+                ):
+                    try:
+                        workspace = (
+                            self._navigation_workspace(
+                                uri
+                            )
+                        )
+                        if workspace is not None:
+                            result = (
+                                function_references(
+                                    workspace,
+                                    path=path,
+                                    line=line,
+                                    character=character,
+                                    include_declaration=(
+                                        include_declaration
+                                    ),
+                                )
+                            )
+                    except (
+                        DiagnosticError,
+                        OSError,
+                        UnicodeError,
+                        ValueError,
+                    ):
+                        result = []
+            return [
+                _response(
+                    message_id,
+                    result,
+                )
+            ]
+
+        if method == "textDocument/rename":
+            document = params.get("textDocument")
+            position = params.get("position")
+            new_name = params.get("newName")
+            uri = (
+                document.get("uri")
+                if isinstance(document, dict)
+                else None
+            )
+            if (
+                not isinstance(uri, str)
+                or not isinstance(
+                    position,
+                    dict,
+                )
+                or not isinstance(
+                    new_name,
+                    str,
+                )
+            ):
+                return [
+                    _error_response(
+                        message_id,
+                        code=_LSP_ERROR_INVALID_PARAMS,
+                        message=(
+                            "rename requires a document, "
+                            "position, and newName"
+                        ),
+                    )
+                ]
+
+            line = position.get("line")
+            character = position.get(
+                "character"
+            )
+            path = _uri_path(uri)
+            if (
+                path is None
+                or not isinstance(line, int)
+                or not isinstance(
+                    character,
+                    int,
+                )
+            ):
+                return [
+                    _error_response(
+                        message_id,
+                        code=_LSP_ERROR_INVALID_PARAMS,
+                        message=(
+                            "rename position must use "
+                            "integer line and character"
+                        ),
+                    )
+                ]
+
+            try:
+                workspace = (
+                    self._navigation_workspace(
+                        uri
+                    )
+                )
+                result = (
+                    function_rename(
+                        workspace,
+                        path=path,
+                        line=line,
+                        character=character,
+                        new_name=new_name,
+                    )
+                    if workspace is not None
+                    else None
+                )
+            except ValueError as exc:
+                return [
+                    _error_response(
+                        message_id,
+                        code=_LSP_ERROR_INVALID_PARAMS,
+                        message=str(exc),
+                    )
+                ]
+            except (
+                DiagnosticError,
+                OSError,
+                UnicodeError,
+            ):
+                result = None
+
+            return [
+                _response(
+                    message_id,
+                    result,
+                )
+            ]
 
         if message_id is not None:
             return [

@@ -1,0 +1,833 @@
+# GHOST FIVE // VECTIS
+# Resolves editor workspaces with unsaved overlays and deterministic function navigation.
+"""Overlay-aware VECTIS workspace loading and pure-function navigation."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, fields, is_dataclass
+from pathlib import Path
+import re
+from typing import Mapping
+from urllib.parse import unquote, urlparse
+
+from vectis.ast import (
+    CallExpression,
+    FunctionDeclaration,
+    ImportStatement,
+    Node,
+    Program,
+    Statement,
+)
+from vectis.diagnostic import DiagnosticError
+from vectis.evaluator import BUILTINS
+from vectis.lexer import KEYWORDS, Lexer
+from vectis.modules import ModuleError, module_root_for
+from vectis.parser import parse
+from vectis.source_span import SourceSpan
+
+
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceProgram:
+    """Resolved module graph built from open buffers and disk fallback."""
+
+    program: Program
+    entry: Path
+    root: Path
+    modules: tuple[Path, ...]
+    programs: tuple[tuple[Path, Program], ...]
+    sources: tuple[tuple[Path, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionOccurrence:
+    """One exact user-function declaration or call token."""
+
+    name: str
+    path: Path
+    span: SourceSpan
+    declaration: bool
+
+
+def uri_path(uri: str) -> Path | None:
+    """Convert one file URI into a local path when possible."""
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return None
+
+    raw = unquote(parsed.path)
+    if parsed.netloc:
+        raw = f"//{parsed.netloc}{raw}"
+
+    import os
+
+    if (
+        os.name == "nt"
+        and len(raw) >= 3
+        and raw[0] == "/"
+        and raw[2] == ":"
+    ):
+        raw = raw[1:]
+
+    return Path(raw)
+
+
+def path_uri(path: Path) -> str:
+    """Return a canonical file URI."""
+    return path.expanduser().resolve().as_uri()
+
+
+def overlay_map(
+    documents: Mapping[str, str],
+) -> dict[Path, str]:
+    """Convert open LSP documents into canonical path overlays."""
+    result: dict[Path, str] = {}
+    for uri, source in documents.items():
+        path = uri_path(uri)
+        if path is None:
+            continue
+        result[path.expanduser().resolve()] = source
+    return result
+
+
+def load_workspace_program(
+    path: Path,
+    *,
+    overlays: Mapping[Path, str] | None = None,
+    root: Path | None = None,
+) -> WorkspaceProgram:
+    """Resolve one entry and its imports using open buffers before disk."""
+    entry = path.expanduser().resolve()
+    project_root = (
+        root.expanduser().resolve()
+        if root is not None
+        else module_root_for(entry)
+    )
+    overlay_sources = {
+        key.expanduser().resolve(): value
+        for key, value in (overlays or {}).items()
+    }
+
+    if not _inside_root(entry, project_root):
+        raise ValueError(
+            "entry source must be inside the configured module root"
+        )
+
+    loaded: set[Path] = set()
+    visiting: list[Path] = []
+    ordered_modules: list[Path] = []
+    program_by_path: dict[Path, Program] = {}
+    source_by_path: dict[Path, str] = {}
+    imported_functions: list[FunctionDeclaration] = []
+    entry_functions: list[FunctionDeclaration] = []
+    entry_executable: list[Statement] = []
+    entry_program: Program | None = None
+
+    def source_for(module_path: Path) -> str:
+        if module_path in overlay_sources:
+            return overlay_sources[module_path]
+        return module_path.read_text(encoding="utf-8")
+
+    def exists(module_path: Path) -> bool:
+        return (
+            module_path in overlay_sources
+            or module_path.is_file()
+        )
+
+    def resolve_import(
+        statement: ImportStatement,
+        importer: Path,
+    ) -> Path:
+        raw = Path(statement.path)
+
+        if raw.is_absolute():
+            raise ModuleError(
+                "import path must be relative",
+                span=statement.span,
+            )
+
+        candidate = (
+            importer.parent / raw
+        ).resolve()
+
+        if not _inside_root(
+            candidate,
+            project_root,
+        ):
+            raise ModuleError(
+                "import path escapes the module root",
+                span=statement.span,
+            )
+
+        if candidate.suffix != ".vectis":
+            raise ModuleError(
+                "import path must reference a .vectis source file",
+                span=statement.span,
+            )
+
+        if not exists(candidate):
+            raise ModuleError(
+                (
+                    "imported module does not exist: "
+                    f"{statement.path}"
+                ),
+                span=statement.span,
+            )
+
+        return candidate
+
+    def visit(
+        module_path: Path,
+        *,
+        is_entry: bool,
+    ) -> None:
+        nonlocal entry_program
+
+        if module_path in loaded:
+            return
+
+        if module_path in visiting:
+            start = visiting.index(module_path)
+            cycle = [
+                *visiting[start:],
+                module_path,
+            ]
+            rendered = " -> ".join(
+                str(item.relative_to(project_root))
+                for item in cycle
+            )
+            current = program_by_path.get(
+                visiting[-1]
+            )
+            if current is None:
+                current = parse(
+                    source_for(module_path),
+                    file=str(module_path),
+                )
+            raise ModuleError(
+                (
+                    "import cycle is not allowed: "
+                    + rendered
+                ),
+                span=current.span,
+            )
+
+        source = source_for(module_path)
+        program = parse(
+            source,
+            file=str(module_path),
+        )
+        source_by_path[module_path] = source
+        program_by_path[module_path] = program
+
+        if is_entry:
+            entry_program = program
+
+        visiting.append(module_path)
+
+        imports = tuple(
+            statement
+            for statement in program.statements
+            if isinstance(
+                statement,
+                ImportStatement,
+            )
+        )
+
+        for statement in imports:
+            visit(
+                resolve_import(
+                    statement,
+                    module_path,
+                ),
+                is_entry=False,
+            )
+
+        declarations = tuple(
+            statement
+            for statement in program.statements
+            if not isinstance(
+                statement,
+                ImportStatement,
+            )
+        )
+
+        if is_entry:
+            for statement in declarations:
+                if isinstance(
+                    statement,
+                    FunctionDeclaration,
+                ):
+                    entry_functions.append(
+                        statement
+                    )
+                else:
+                    entry_executable.append(
+                        statement
+                    )
+        else:
+            invalid = next(
+                (
+                    statement
+                    for statement in declarations
+                    if not isinstance(
+                        statement,
+                        FunctionDeclaration,
+                    )
+                ),
+                None,
+            )
+            if invalid is not None:
+                raise ModuleError(
+                    (
+                        "imported modules may contain only imports "
+                        "and pure function declarations"
+                    ),
+                    span=invalid.span,
+                )
+
+            imported_functions.extend(
+                statement
+                for statement in declarations
+                if isinstance(
+                    statement,
+                    FunctionDeclaration,
+                )
+            )
+
+        visiting.pop()
+        loaded.add(module_path)
+        ordered_modules.append(
+            module_path
+        )
+
+    visit(entry, is_entry=True)
+
+    if entry_program is None:
+        raise RuntimeError(
+            "workspace loader did not produce an entry program"
+        )
+
+    merged = Program(
+        span=entry_program.span,
+        statements=tuple(
+            [
+                *imported_functions,
+                *entry_functions,
+                *entry_executable,
+            ]
+        ),
+    )
+
+    return WorkspaceProgram(
+        program=merged,
+        entry=entry,
+        root=project_root,
+        modules=tuple(ordered_modules),
+        programs=tuple(
+            (
+                module_path,
+                program_by_path[module_path],
+            )
+            for module_path in ordered_modules
+        ),
+        sources=tuple(
+            (
+                module_path,
+                source_by_path[module_path],
+            )
+            for module_path in ordered_modules
+        ),
+    )
+
+
+def navigation_workspace(
+    target: Path,
+    *,
+    documents: Mapping[str, str],
+) -> WorkspaceProgram:
+    """Choose the widest open reachable workspace containing target."""
+    canonical_target = (
+        target.expanduser().resolve()
+    )
+    overlays = overlay_map(documents)
+    candidates: list[WorkspaceProgram] = []
+
+    for entry in sorted(
+        overlays,
+        key=lambda item: str(item),
+    ):
+        try:
+            workspace = load_workspace_program(
+                entry,
+                overlays=overlays,
+            )
+        except (
+            DiagnosticError,
+            OSError,
+            UnicodeError,
+            ValueError,
+        ):
+            continue
+
+        if canonical_target in workspace.modules:
+            candidates.append(workspace)
+
+    if candidates:
+        candidates.sort(
+            key=lambda item: (
+                -len(item.modules),
+                str(item.entry),
+            )
+        )
+        return candidates[0]
+
+    return load_workspace_program(
+        canonical_target,
+        overlays=overlays,
+    )
+
+
+def function_definition(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+) -> dict[str, object] | None:
+    """Return the declaration location for the function under the cursor."""
+    name = _function_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+    if name is None:
+        return None
+
+    declaration = next(
+        (
+            item
+            for item in function_occurrences(
+                workspace
+            )
+            if (
+                item.name == name
+                and item.declaration
+            )
+        ),
+        None,
+    )
+    if declaration is None:
+        return None
+    return _location(declaration)
+
+
+def function_references(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+    include_declaration: bool,
+) -> list[dict[str, object]]:
+    """Return deterministic reachable references for one user function."""
+    name = _function_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+    if name is None:
+        return []
+
+    return [
+        _location(item)
+        for item in function_occurrences(
+            workspace
+        )
+        if (
+            item.name == name
+            and (
+                include_declaration
+                or not item.declaration
+            )
+        )
+    ]
+
+
+def function_rename(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+    new_name: str,
+) -> dict[str, object] | None:
+    """Return a WorkspaceEdit for one reachable user-function symbol."""
+    if not valid_function_name(new_name):
+        raise ValueError(
+            "new function name must be an unused VECTIS identifier"
+        )
+
+    name = _function_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+    if name is None:
+        return None
+
+    occurrences = [
+        item
+        for item in function_occurrences(
+            workspace
+        )
+        if item.name == name
+    ]
+    if not occurrences:
+        return None
+
+    existing = {
+        item.name
+        for item in function_occurrences(
+            workspace
+        )
+        if item.declaration
+    }
+    if (
+        new_name != name
+        and new_name in existing
+    ):
+        raise ValueError(
+            (
+                "new function name conflicts with an "
+                "existing user function"
+            )
+        )
+
+    changes: dict[
+        str,
+        list[dict[str, object]],
+    ] = {}
+
+    for item in occurrences:
+        uri = path_uri(item.path)
+        changes.setdefault(
+            uri,
+            [],
+        ).append(
+            {
+                "range": _lsp_range(
+                    item.span
+                ),
+                "newText": new_name,
+            }
+        )
+
+    return {
+        "changes": {
+            uri: changes[uri]
+            for uri in sorted(changes)
+        }
+    }
+
+
+def valid_function_name(name: str) -> bool:
+    """Return whether a rename target is valid for user functions."""
+    return (
+        isinstance(name, str)
+        and bool(_IDENTIFIER.fullmatch(name))
+        and name not in KEYWORDS
+        and name not in BUILTINS
+    )
+
+
+def function_occurrences(
+    workspace: WorkspaceProgram,
+) -> tuple[FunctionOccurrence, ...]:
+    """Return exact declaration and call token occurrences."""
+    source_map = dict(
+        workspace.sources
+    )
+    result: list[FunctionOccurrence] = []
+
+    for path, program in workspace.programs:
+        source = source_map[path]
+        tokens = Lexer(
+            source,
+            file=str(path),
+        ).tokenize()
+
+        for node in _walk(program):
+            if isinstance(
+                node,
+                FunctionDeclaration,
+            ):
+                span = _identifier_span(
+                    tokens,
+                    node.span,
+                    node.name,
+                )
+                if span is not None:
+                    result.append(
+                        FunctionOccurrence(
+                            name=node.name,
+                            path=path,
+                            span=span,
+                            declaration=True,
+                        )
+                    )
+                continue
+
+            if isinstance(
+                node,
+                CallExpression,
+            ):
+                if node.name in BUILTINS:
+                    continue
+                span = _identifier_span(
+                    tokens,
+                    node.span,
+                    node.name,
+                )
+                if span is not None:
+                    result.append(
+                        FunctionOccurrence(
+                            name=node.name,
+                            path=path,
+                            span=span,
+                            declaration=False,
+                        )
+                    )
+
+    unique = {
+        (
+            item.name,
+            str(item.path),
+            item.span.start.line,
+            item.span.start.column,
+            item.span.end.line,
+            item.span.end.column,
+            item.declaration,
+        ): item
+        for item in result
+    }
+
+    return tuple(
+        sorted(
+            unique.values(),
+            key=lambda item: (
+                str(item.path),
+                item.span.start.line,
+                item.span.start.column,
+                not item.declaration,
+            ),
+        )
+    )
+
+
+def _function_name_at(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+) -> str | None:
+    canonical = path.expanduser().resolve()
+    for item in function_occurrences(
+        workspace
+    ):
+        if item.path != canonical:
+            continue
+        if _contains_lsp_position(
+            item.span,
+            line=line,
+            character=character,
+        ):
+            return item.name
+    return None
+
+
+def _identifier_span(
+    tokens: list[object],
+    outer: SourceSpan,
+    name: str,
+) -> SourceSpan | None:
+    for token in tokens:
+        if (
+            getattr(token, "type", None)
+            != "identifier"
+            or getattr(
+                token,
+                "value",
+                None,
+            )
+            != name
+        ):
+            continue
+        span = getattr(
+            token,
+            "span",
+            None,
+        )
+        if (
+            isinstance(
+                span,
+                SourceSpan,
+            )
+            and _span_inside(
+                span,
+                outer,
+            )
+        ):
+            return span
+    return None
+
+
+def _walk(value: object):
+    if isinstance(value, Node):
+        yield value
+
+    if is_dataclass(value):
+        for field in fields(value):
+            if field.name == "span":
+                continue
+            yield from _walk(
+                getattr(
+                    value,
+                    field.name,
+                )
+            )
+        return
+
+    if isinstance(
+        value,
+        (tuple, list),
+    ):
+        for item in value:
+            yield from _walk(item)
+
+
+def _position_key(
+    line: int,
+    column: int,
+) -> tuple[int, int]:
+    return (line, column)
+
+
+def _span_inside(
+    inner: SourceSpan,
+    outer: SourceSpan,
+) -> bool:
+    return (
+        _position_key(
+            outer.start.line,
+            outer.start.column,
+        )
+        <= _position_key(
+            inner.start.line,
+            inner.start.column,
+        )
+        and _position_key(
+            inner.end.line,
+            inner.end.column,
+        )
+        <= _position_key(
+            outer.end.line,
+            outer.end.column,
+        )
+    )
+
+
+def _contains_lsp_position(
+    span: SourceSpan,
+    *,
+    line: int,
+    character: int,
+) -> bool:
+    position = (
+        line + 1,
+        character + 1,
+    )
+    return (
+        _position_key(
+            span.start.line,
+            span.start.column,
+        )
+        <= position
+        <= _position_key(
+            span.end.line,
+            span.end.column,
+        )
+    )
+
+
+def _lsp_range(
+    span: SourceSpan,
+) -> dict[str, object]:
+    return {
+        "start": {
+            "line": max(
+                0,
+                span.start.line - 1,
+            ),
+            "character": max(
+                0,
+                span.start.column - 1,
+            ),
+        },
+        "end": {
+            "line": max(
+                0,
+                span.end.line - 1,
+            ),
+            "character": max(
+                0,
+                span.end.column,
+            ),
+        },
+    }
+
+
+def _location(
+    occurrence: FunctionOccurrence,
+) -> dict[str, object]:
+    return {
+        "uri": path_uri(
+            occurrence.path
+        ),
+        "range": _lsp_range(
+            occurrence.span
+        ),
+    }
+
+
+def _inside_root(
+    path: Path,
+    root: Path,
+) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+__all__ = [
+    "FunctionOccurrence",
+    "WorkspaceProgram",
+    "function_definition",
+    "function_occurrences",
+    "function_references",
+    "function_rename",
+    "load_workspace_program",
+    "navigation_workspace",
+    "overlay_map",
+    "path_uri",
+    "uri_path",
+    "valid_function_name",
+]
