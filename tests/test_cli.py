@@ -572,5 +572,26 @@ class CliTests(unittest.TestCase):
         )
 
 
+    def test_actions_exposes_typed_standard_contracts(self):
+        code, stdout, stderr = self.invoke(
+            ["actions"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        read = next(
+            item
+            for item in payload["standard_actions"]
+            if item["operation"] == "filesystem.read_text"
+        )
+        self.assertEqual(
+            read["input"]["fields"][0]["name"],
+            "path",
+        )
+        self.assertEqual(
+            read["result"]["type"],
+            "string",
+        )
+
 if __name__ == "__main__":
     unittest.main()

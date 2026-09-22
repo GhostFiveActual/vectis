@@ -18,6 +18,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 2. [RFC 0002: Deterministic source modules](0002-deterministic-modules.md)
 3. [RFC 0003: Explicit actions](0003-explicit-actions.md)
 4. [RFC 0004: Explicit CLI action profiles](0004-action-profiles.md)
+5. [RFC 0005: Typed action contracts](0005-typed-action-contracts.md)
 
 ## When an RFC is required
 

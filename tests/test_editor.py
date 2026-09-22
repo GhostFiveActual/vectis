@@ -67,5 +67,16 @@ mission "Release" {
         )
 
 
+    def test_action_hover_exposes_contract_shape(self) -> None:
+        action = hover_info(
+            "http.request",
+            line=0,
+            character=4,
+        )
+        value = action["contents"]["value"]
+        self.assertIn("method: string", value)
+        self.assertIn("url: string", value)
+        self.assertIn("Result: `object`", value)
+
 if __name__ == "__main__":
     unittest.main()
