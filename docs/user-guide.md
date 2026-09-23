@@ -223,7 +223,7 @@ Imports resolve relative to the importing file and remain inside the nearest pro
 
 Imported modules may contain imports and top-level pure function declarations only. Missing files, absolute paths, root escapes, invalid extensions, cycles, and executable imported statements fail before graph generation.
 
-Use `vectis modules FILE` to inspect the resolved module set. Module loading composes source before compilation and does not grant runtime filesystem authority.
+Use `vectis modules FILE` to inspect the resolved module set for one entry file. Use `vectis modules PATH --browse` to inspect the complete project-bounded source catalog, dependency edges, function signatures, executable-file classification, and safe module diagnostics. Module loading and browsing do not grant runtime filesystem authority.
 
 ## Assertions
 

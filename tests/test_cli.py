@@ -81,6 +81,7 @@ class CliTests(unittest.TestCase):
             "history",
             "capability-config",
             "templates",
+            "modules",
             "mission",
             "audit",
             "fingerprint",
@@ -970,6 +971,58 @@ class CliTests(unittest.TestCase):
             self.assertEqual(
                 result["failed"],
                 0,
+            )
+
+
+    def test_modules_browse_project_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n[project]\n",
+                encoding="utf-8",
+            )
+            library = root / "lib" / "ready.vectis"
+            library.parent.mkdir(parents=True)
+            library.write_text(
+                "function ready(value) { return value; }\n",
+                encoding="utf-8",
+            )
+            mission = root / "main.vectis"
+            mission.write_text(
+                'import "lib/ready.vectis";\n'
+                'mission "Browse" { publish ready(true); }\n',
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "modules",
+                    str(root),
+                    "--browse",
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(
+                payload["schema"],
+                "vectis.module-browser/v1",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["module_count"], 2)
+            self.assertEqual(
+                payload["edges"],
+                [
+                    {
+                        "from": "main.vectis",
+                        "to": "lib/ready.vectis",
+                    }
+                ],
+            )
+            self.assertNotIn(
+                str(root.resolve()),
+                stdout,
             )
 
 

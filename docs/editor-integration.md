@@ -43,7 +43,8 @@ The current server supports:
 17. `workspace/executeCommand` with `vectis.history.inspect` for project-bounded execution receipt history.
 18. `workspace/executeCommand` with `vectis.capabilities.inspect` for project-bounded authority configuration preview.
 19. `workspace/executeCommand` with `vectis.templates.inspect` for read-only built-in project template inspection.
-20. `textDocument/publishDiagnostics` notifications.
+20. `workspace/executeCommand` with `vectis.modules.inspect` for project-bounded module browsing.
+21. `textDocument/publishDiagnostics` notifications.
 
 Diagnostics use the stable VECTIS diagnostic code as the LSP code and report parser, lexer, module-resolution, and semantic failures through the same compiler contracts used by command-line validation.
 
@@ -116,6 +117,16 @@ The command is read-only. It does not create runtime capability grants, select a
 An omitted name returns catalog metadata. A named preview includes the ordered relative file paths, UTF-8 content, and SHA-256 digest for each file.
 
 The editor command is read-only. It does not write project files, download templates, discover remote registries, execute missions, or activate action profiles.
+
+## Module browsing
+
+`workspace/executeCommand` with `vectis.modules.inspect` returns a deterministic project module catalog. Clients pass one argument object containing a file-backed document `uri`.
+
+The selected document identifies the nearest VECTIS project root. The response uses project-relative paths and reports each `.vectis` file, declared imports, resolved dependency edges, pure-function signatures, executable statement counts, safe diagnostics, importability, cycles, and rejected symbolic-link paths.
+
+Open file-backed VECTIS documents inside the project replace saved source. Unsaved file-backed `.vectis` documents inside the root are included in the catalog even when they do not exist on disk.
+
+The command is read-only. It does not execute missions, compile an execution graph, grant capabilities, select action profiles, follow source symlinks, write files, or access a remote module registry.
 
 ## Source coordinates
 

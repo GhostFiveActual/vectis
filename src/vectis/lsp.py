@@ -18,6 +18,7 @@ from vectis.diagnostic import Diagnostic, DiagnosticError
 from vectis.editor import completion_items, document_symbols, hover_info
 from vectis.formatter import format_program
 from vectis.history import execution_history
+from vectis.module_browser import browse_project_modules
 from vectis.templates import template_catalog, template_preview
 from vectis.lsp_workspace import (
     load_workspace_program,
@@ -504,6 +505,7 @@ class LanguageServer:
                                     "vectis.history.inspect",
                                     "vectis.capabilities.inspect",
                                     "vectis.templates.inspect",
+                                    "vectis.modules.inspect",
                                 ],
                             },
                         },
@@ -972,6 +974,7 @@ class LanguageServer:
                 "vectis.history.inspect",
                 "vectis.capabilities.inspect",
                 "vectis.templates.inspect",
+                "vectis.modules.inspect",
             }:
                 return [
                     _error_response(
@@ -981,6 +984,72 @@ class LanguageServer:
                             "unsupported VECTIS command: "
                             f"{command}"
                         ),
+                    )
+                ]
+
+            if command == "vectis.modules.inspect":
+                if (
+                    not isinstance(arguments, list)
+                    or len(arguments) != 1
+                    or not isinstance(arguments[0], dict)
+                    or not isinstance(arguments[0].get("uri"), str)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message=(
+                                "vectis.modules.inspect requires one "
+                                "argument object with uri"
+                            ),
+                        )
+                    ]
+
+                path = _uri_path(arguments[0]["uri"])
+                if path is None:
+                    return [
+                        _response(
+                            message_id,
+                            {
+                                "ok": False,
+                                "error": "module browsing requires a file URI",
+                            },
+                        )
+                    ]
+
+                try:
+                    catalog = browse_project_modules(
+                        path,
+                        overlays=overlay_map(self.documents),
+                    )
+                except ValueError as exc:
+                    return [
+                        _response(
+                            message_id,
+                            {
+                                "ok": False,
+                                "error": str(exc),
+                            },
+                        )
+                    ]
+                except (OSError, UnicodeError):
+                    return [
+                        _response(
+                            message_id,
+                            {
+                                "ok": False,
+                                "error": "module browsing failed",
+                            },
+                        )
+                    ]
+
+                return [
+                    _response(
+                        message_id,
+                        {
+                            "ok": True,
+                            "catalog": catalog,
+                        },
                     )
                 ]
 
