@@ -33,6 +33,11 @@ class LanguageServerTests(unittest.TestCase):
         self.assertTrue(capabilities["definitionProvider"])
         self.assertTrue(capabilities["referencesProvider"])
         self.assertTrue(capabilities["renameProvider"])
+        self.assertIn("signatureHelpProvider", capabilities)
+        self.assertEqual(
+            capabilities["signatureHelpProvider"]["triggerCharacters"],
+            ["(", ","],
+        )
         self.assertIn("completionProvider", capabilities)
 
     def test_open_publishes_parser_diagnostic(self) -> None:
