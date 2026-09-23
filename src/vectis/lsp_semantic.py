@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from vectis.diagnostic import DiagnosticError
 from vectis.lexer import Lexer
+from vectis.lsp_position import utf16_units
 
 
 SEMANTIC_TOKEN_TYPES = (
@@ -520,20 +521,10 @@ def _segments(
 
         yield (
             line,
-            _utf16_units(
+            utf16_units(
                 text[:start_index]
             ),
-            _utf16_units(
+            utf16_units(
                 segment
             ),
         )
-
-
-def _utf16_units(
-    text: str,
-) -> int:
-    return len(
-        text.encode(
-            "utf-16-le"
-        )
-    ) // 2

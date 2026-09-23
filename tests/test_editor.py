@@ -78,5 +78,35 @@ mission "Release" {
         self.assertIn("url: string", value)
         self.assertIn("Result: `object`", value)
 
+    def test_hover_and_symbols_use_utf16_positions(self) -> None:
+        hover_source = "😀 concat(value)"
+        hover = hover_info(
+            hover_source,
+            line=0,
+            character=5,
+        )
+        self.assertIsNotNone(hover)
+        self.assertIn(
+            "Pure and deterministic",
+            hover["contents"]["value"],
+        )
+
+        symbol_source = 'mission "😀" { source quality 96; }'
+        symbols = document_symbols(
+            symbol_source,
+            file="unicode.vectis",
+        )
+        quality = symbols[0]["children"][0]
+        expected = len(
+            symbol_source[: symbol_source.index("source")].encode(
+                "utf-16-le"
+            )
+        ) // 2
+        self.assertEqual(
+            quality["range"]["start"]["character"],
+            expected,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

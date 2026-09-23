@@ -26,6 +26,10 @@ from vectis.ast import (
 from vectis.diagnostic import DiagnosticError
 from vectis.evaluator import BUILTINS
 from vectis.lexer import KEYWORDS, Lexer
+from vectis.lsp_position import (
+    contains_lsp_position,
+    source_span_to_lsp_range,
+)
 from vectis.modules import ModuleError, module_root_for
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
@@ -437,7 +441,7 @@ def function_definition(
     )
     if declaration is None:
         return None
-    return _location(declaration)
+    return _location(workspace, declaration)
 
 
 def function_references(
@@ -459,7 +463,7 @@ def function_references(
         return []
 
     return [
-        _location(item)
+        _location(workspace, item)
         for item in function_occurrences(
             workspace
         )
@@ -528,6 +532,7 @@ def function_rename(
         str,
         list[dict[str, object]],
     ] = {}
+    source_map = dict(workspace.sources)
 
     for item in occurrences:
         uri = path_uri(item.path)
@@ -537,7 +542,8 @@ def function_rename(
         ).append(
             {
                 "range": _lsp_range(
-                    item.span
+                    source_map[item.path],
+                    item.span,
                 ),
                 "newText": new_name,
             }
@@ -760,7 +766,7 @@ def value_definition(
     ]
     if len(declarations) != 1:
         return None
-    return _location(declarations[0])
+    return _location(workspace, declarations[0])
 
 
 def value_references(
@@ -793,7 +799,7 @@ def value_references(
         return []
 
     return [
-        _location(item)
+        _location(workspace, item)
         for item in occurrences
         if include_declaration or not item.declaration
     ]
@@ -844,11 +850,15 @@ def value_rename(
         )
 
     changes: dict[str, list[dict[str, object]]] = {}
+    source_map = dict(workspace.sources)
     for item in occurrences:
         uri = path_uri(item.path)
         changes.setdefault(uri, []).append(
             {
-                "range": _lsp_range(item.span),
+                "range": _lsp_range(
+                    source_map[item.path],
+                    item.span,
+                ),
                 "newText": new_name,
             }
         )
@@ -960,10 +970,12 @@ def _value_name_at(
     character: int,
 ) -> str | None:
     canonical = path.expanduser().resolve()
+    source_map = dict(workspace.sources)
     for item in value_occurrences(workspace):
         if item.path != canonical:
             continue
         if _contains_lsp_position(
+            source_map[item.path],
             item.span,
             line=line,
             character=character,
@@ -979,12 +991,14 @@ def _function_name_at(
     character: int,
 ) -> str | None:
     canonical = path.expanduser().resolve()
+    source_map = dict(workspace.sources)
     for item in function_occurrences(
         workspace
     ):
         if item.path != canonical:
             continue
         if _contains_lsp_position(
+            source_map[item.path],
             item.span,
             line=line,
             character=character,
@@ -1085,64 +1099,42 @@ def _span_inside(
 
 
 def _contains_lsp_position(
+    source: str,
     span: SourceSpan,
     *,
     line: int,
     character: int,
 ) -> bool:
-    position = (
-        line + 1,
-        character + 1,
-    )
-    return (
-        _position_key(
-            span.start.line,
-            span.start.column,
-        )
-        <= position
-        <= _position_key(
-            span.end.line,
-            span.end.column,
-        )
+    return contains_lsp_position(
+        source,
+        span,
+        line=line,
+        character=character,
     )
 
 
 def _lsp_range(
+    source: str,
     span: SourceSpan,
 ) -> dict[str, object]:
-    return {
-        "start": {
-            "line": max(
-                0,
-                span.start.line - 1,
-            ),
-            "character": max(
-                0,
-                span.start.column - 1,
-            ),
-        },
-        "end": {
-            "line": max(
-                0,
-                span.end.line - 1,
-            ),
-            "character": max(
-                0,
-                span.end.column,
-            ),
-        },
-    }
+    return source_span_to_lsp_range(
+        source,
+        span,
+    )
 
 
 def _location(
+    workspace: WorkspaceProgram,
     occurrence: FunctionOccurrence | ValueOccurrence,
 ) -> dict[str, object]:
+    source_map = dict(workspace.sources)
     return {
         "uri": path_uri(
             occurrence.path
         ),
         "range": _lsp_range(
-            occurrence.span
+            source_map[occurrence.path],
+            occurrence.span,
         ),
     }
 

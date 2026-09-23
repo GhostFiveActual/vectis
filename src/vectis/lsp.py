@@ -29,6 +29,7 @@ from vectis.lsp_semantic import (
     semantic_tokens,
 )
 from vectis.lsp_graph import graph_inspection
+from vectis.lsp_position import source_span_to_lsp_range
 from vectis.lsp_signature import signature_help
 from vectis.parser import parse
 
@@ -44,12 +45,16 @@ def _uri_path(uri: str) -> Path | None:
     return uri_path(uri)
 
 
-def _lsp_diagnostic(diagnostic: Diagnostic) -> dict[str, object]:
-    """Translate one VECTIS diagnostic into the LSP diagnostic shape."""
-    start = diagnostic.span.start
-    end = diagnostic.span.end
-    return {
-        "range": {
+def _lsp_diagnostic(
+    diagnostic: Diagnostic,
+    *,
+    source: str | None = None,
+) -> dict[str, object]:
+    """Translate one VECTIS diagnostic through the shared UTF-16 contract."""
+    if source is None:
+        start = diagnostic.span.start
+        end = diagnostic.span.end
+        converted = {
             "start": {
                 "line": max(0, start.line - 1),
                 "character": max(0, start.column - 1),
@@ -58,7 +63,15 @@ def _lsp_diagnostic(diagnostic: Diagnostic) -> dict[str, object]:
                 "line": max(0, end.line - 1),
                 "character": max(0, end.column),
             },
-        },
+        }
+    else:
+        converted = source_span_to_lsp_range(
+            source,
+            diagnostic.span,
+        )
+
+    return {
+        "range": converted,
         "severity": 1 if diagnostic.severity.value == "error" else 2,
         "code": diagnostic.code.value,
         "source": "vectis",
@@ -106,6 +119,28 @@ class LanguageServer:
         self.shutdown_requested = False
         self.exit_requested = False
 
+    def _diagnostic_source(
+        self,
+        diagnostic: Diagnostic,
+        fallback: str | None,
+    ) -> str | None:
+        """Return the open or saved source that produced one diagnostic span."""
+        file = diagnostic.span.file
+        if file in self.documents:
+            return self.documents[file]
+
+        path = _uri_path(file)
+        if path is None and not file.startswith("<"):
+            path = Path(file)
+        if path is not None:
+            canonical = path.expanduser().resolve()
+            overlays = overlay_map(self.documents)
+            if canonical in overlays:
+                return overlays[canonical]
+            if canonical.is_file():
+                return canonical.read_text(encoding="utf-8")
+        return fallback
+
     def _diagnostics(self, uri: str, source: str) -> list[dict[str, object]]:
         file = uri
         try:
@@ -125,11 +160,17 @@ class LanguageServer:
 
             result = compile_program(program)
             return [
-                _lsp_diagnostic(diagnostic)
+                _lsp_diagnostic(
+                    diagnostic,
+                    source=self._diagnostic_source(diagnostic, source),
+                )
                 for diagnostic in result.diagnostics
             ]
         except DiagnosticError as exc:
-            return [_lsp_diagnostic(exc.diagnostic)]
+            return [_lsp_diagnostic(
+                    exc.diagnostic,
+                    source=self._diagnostic_source(exc.diagnostic, source),
+                )]
         except (OSError, UnicodeError, ValueError) as exc:
             return [
                 {
@@ -202,7 +243,10 @@ class LanguageServer:
                 return {
                     "ok": False,
                     "diagnostics": [
-                        _lsp_diagnostic(diagnostic)
+                        _lsp_diagnostic(
+                    diagnostic,
+                    source=self._diagnostic_source(diagnostic, source),
+                )
                         for diagnostic in result.diagnostics
                     ],
                 }
@@ -214,7 +258,10 @@ class LanguageServer:
         except DiagnosticError as exc:
             return {
                 "ok": False,
-                "diagnostics": [_lsp_diagnostic(exc.diagnostic)],
+                "diagnostics": [_lsp_diagnostic(
+                    exc.diagnostic,
+                    source=self._diagnostic_source(exc.diagnostic, source),
+                )],
             }
         except (OSError, UnicodeError, ValueError) as exc:
             return {

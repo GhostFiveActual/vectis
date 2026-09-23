@@ -11,6 +11,7 @@ from vectis.ast import FunctionDeclaration
 from vectis.diagnostic import DiagnosticError
 from vectis.evaluator import builtin_manifest
 from vectis.lexer import Lexer
+from vectis.lsp_position import lsp_position_to_offset
 from vectis.lsp_workspace import WorkspaceProgram
 
 
@@ -92,26 +93,10 @@ def _position_offset(
     line: int,
     character: int,
 ) -> int | None:
-    if line < 0 or character < 0:
-        return None
-
-    starts = [0]
-    for index, char in enumerate(source):
-        if char == "\n":
-            starts.append(index + 1)
-
-    if line >= len(starts):
-        return None
-
-    start = starts[line]
-    newline = source.find("\n", start)
-    end = len(source) if newline == -1 else newline
-    if end > start and source[end - 1] == "\r":
-        end -= 1
-
-    return min(
-        start + character,
-        end,
+    return lsp_position_to_offset(
+        source,
+        line,
+        character,
     )
 
 
