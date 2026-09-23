@@ -11,6 +11,8 @@ import sys
 from typing import BinaryIO
 
 from vectis import __version__
+from vectis.action_profile import load_action_profile
+from vectis.capability_config import capability_configuration
 from vectis.compiler import compile_program
 from vectis.diagnostic import Diagnostic, DiagnosticError
 from vectis.editor import completion_items, document_symbols, hover_info
@@ -336,6 +338,99 @@ class LanguageServer:
             "history": history,
         }
 
+    def _capability_configuration(
+        self,
+        uri: str,
+        profile_name: str | None,
+        capability_names: tuple[str, ...],
+    ) -> dict[str, object]:
+        """Preview explicit authority against the current editor workspace."""
+        source = self.documents.get(uri)
+        path = _uri_path(uri)
+        if path is None:
+            return {
+                "ok": False,
+                "error": (
+                    "capability configuration requires a file-backed document"
+                ),
+            }
+
+        try:
+            root = module_root_for(path)
+            profile = None
+            if profile_name is not None:
+                relative = Path(profile_name)
+                if relative.is_absolute():
+                    return {
+                        "ok": False,
+                        "error": (
+                            "capability profile must be relative to the project root"
+                        ),
+                    }
+                profile_path = (root / relative).resolve()
+                try:
+                    profile_path.relative_to(root)
+                except ValueError:
+                    return {
+                        "ok": False,
+                        "error": (
+                            "capability profile must remain inside the project root"
+                        ),
+                    }
+                profile = load_action_profile(profile_path)
+
+            workspace = navigation_workspace(
+                path,
+                documents=self.documents,
+            )
+            result = compile_program(workspace.program)
+            if result.graph is None:
+                return {
+                    "ok": False,
+                    "diagnostics": [
+                        _lsp_diagnostic(
+                            diagnostic,
+                            source=self._diagnostic_source(
+                                diagnostic,
+                                source,
+                            ),
+                        )
+                        for diagnostic in result.diagnostics
+                    ],
+                }
+
+            return {
+                "ok": True,
+                "configuration": capability_configuration(
+                    result.graph,
+                    profile=profile,
+                    extra_capabilities=capability_names,
+                ),
+            }
+        except DiagnosticError as exc:
+            return {
+                "ok": False,
+                "diagnostics": [
+                    _lsp_diagnostic(
+                        exc.diagnostic,
+                        source=self._diagnostic_source(
+                            exc.diagnostic,
+                            source,
+                        ),
+                    )
+                ],
+            }
+        except (
+            OSError,
+            UnicodeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+            }
+
     def _format(self, uri: str) -> list[dict[str, object]]:
         source = self.documents.get(uri)
         if source is None:
@@ -406,6 +501,7 @@ class LanguageServer:
                                 "commands": [
                                     "vectis.graph.inspect",
                                     "vectis.history.inspect",
+                                    "vectis.capabilities.inspect",
                                 ],
                             },
                         },
@@ -872,6 +968,7 @@ class LanguageServer:
             if command not in {
                 "vectis.graph.inspect",
                 "vectis.history.inspect",
+                "vectis.capabilities.inspect",
             }:
                 return [
                     _error_response(
@@ -880,6 +977,70 @@ class LanguageServer:
                         message=(
                             "unsupported VECTIS command: "
                             f"{command}"
+                        ),
+                    )
+                ]
+
+            if command == "vectis.capabilities.inspect":
+                if (
+                    not isinstance(arguments, list)
+                    or len(arguments) != 1
+                    or not isinstance(arguments[0], dict)
+                    or not isinstance(arguments[0].get("uri"), str)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message=(
+                                "vectis.capabilities.inspect requires one "
+                                "argument object with uri"
+                            ),
+                        )
+                    ]
+
+                profile_name = arguments[0].get("profile")
+                capability_names = arguments[0].get(
+                    "capabilities",
+                    [],
+                )
+                if (
+                    profile_name is not None
+                    and not isinstance(profile_name, str)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message="capability profile must be a string",
+                        )
+                    ]
+                if (
+                    not isinstance(capability_names, list)
+                    or any(
+                        not isinstance(item, str)
+                        or not item.strip()
+                        for item in capability_names
+                    )
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message=(
+                                "capabilities must be an array of "
+                                "non-empty strings"
+                            ),
+                        )
+                    ]
+
+                return [
+                    _response(
+                        message_id,
+                        self._capability_configuration(
+                            arguments[0]["uri"],
+                            profile_name,
+                            tuple(capability_names),
                         ),
                     )
                 ]

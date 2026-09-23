@@ -41,7 +41,8 @@ The current server supports:
 15. `textDocument/semanticTokens/full` for deterministic language roles.
 16. `workspace/executeCommand` with `vectis.graph.inspect` for read-only execution graph inspection.
 17. `workspace/executeCommand` with `vectis.history.inspect` for project-bounded execution receipt history.
-18. `textDocument/publishDiagnostics` notifications.
+18. `workspace/executeCommand` with `vectis.capabilities.inspect` for project-bounded authority configuration preview.
+19. `textDocument/publishDiagnostics` notifications.
 
 Diagnostics use the stable VECTIS diagnostic code as the LSP code and report parser, lexer, module-resolution, and semantic failures through the same compiler contracts used by command-line validation.
 
@@ -96,6 +97,16 @@ The receipt directory is resolved inside the selected document's VECTIS project 
 History returns an allowlisted projection rather than raw receipt JSON. Entries include receipt filename, recorded time, safe source label, plan fingerprint and numeric summary, execution status, dry-run state, node-state counts, failure categories, granted capability names, and a profile fingerprint when present. Runtime values, failure details, local paths, and arbitrary receipt fields are not returned.
 
 The history command performs no execution and creates no receipts. Receipts appear only when an operator explicitly persists them through existing receipt options.
+
+## Capability configuration
+
+`workspace/executeCommand` with `vectis.capabilities.inspect` compares the current compiled mission with explicit capability grants and an optional action profile. Clients pass one argument object containing a file-backed document `uri`, an optional relative `profile`, and an optional `capabilities` array.
+
+Mission compilation uses the current open-buffer workspace. Relative profiles are resolved inside the selected document's VECTIS project root, while absolute paths and paths that resolve outside the project root are rejected.
+
+The response reports the plan fingerprint, required and requested capabilities, planned action operation and capability pairs, configured capability names, registered profile operations, missing authority, unused grants, unresolved authority nodes, and the existing profile-shape attestation when a profile is supplied.
+
+The command is read-only. It does not create runtime capability grants, select a profile for later execution, invoke actions, or expose filesystem roots, executable paths, or environment values. Runtime authority still requires explicit execution options.
 
 ## Source coordinates
 

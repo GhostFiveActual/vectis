@@ -28,6 +28,7 @@ from vectis.evaluator import builtin_manifest, evaluate_expression
 from vectis.examples import CANONICAL_EXAMPLES, example_manifest
 from vectis.formatter import format_program
 from vectis.history import execution_history
+from vectis.capability_config import capability_configuration
 from vectis.lexer import Lexer, LexerError
 from vectis.modules import ModuleError, load_program_file
 from vectis.parser import ParserError, parse, parse_expression
@@ -463,6 +464,26 @@ def command_history(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def command_capability_config(args: argparse.Namespace) -> int:
+    """Preview explicit runtime authority against one compiled mission."""
+    graph = _compile_source(args.source)
+    if graph is None:
+        return 1
+
+    profile = (
+        load_action_profile(args.actions_config)
+        if args.actions_config
+        else None
+    )
+    preview = capability_configuration(
+        graph,
+        profile=profile,
+        extra_capabilities=args.capability,
+    )
+    _print_json(preview)
+    return 0 if preview["satisfied"] else 1
 
 
 def _terminal_value(value: object, *, limit: int = 34) -> str:
@@ -1378,6 +1399,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     history_parser.set_defaults(
         handler=command_history
+    )
+
+    capability_config_parser = commands.add_parser(
+        "capability-config",
+        help="preview explicit authority against a compiled mission",
+    )
+    _add_source_argument(capability_config_parser)
+    capability_config_parser.add_argument(
+        "--actions-config",
+        metavar="FILE",
+        help="explicit TOML action authority profile to inspect",
+    )
+    capability_config_parser.add_argument(
+        "--capability",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="explicit capability grant to preview; may be repeated",
+    )
+    capability_config_parser.set_defaults(
+        handler=command_capability_config
     )
 
     mission_parser = commands.add_parser(
