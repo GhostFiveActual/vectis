@@ -25,6 +25,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 9. [RFC 0009: LSP signature help](0009-lsp-signature-help.md)
 10. [RFC 0010: LSP semantic tokens](0010-lsp-semantic-tokens.md)
 11. [RFC 0011: LSP mission value navigation](0011-lsp-mission-value-navigation.md)
+12. [RFC 0012: LSP execution graph inspection](0012-lsp-graph-inspection.md)
 
 ## When an RFC is required
 
