@@ -50,6 +50,7 @@ class LanguageServerTests(unittest.TestCase):
                 "vectis.graph.inspect",
                 "vectis.history.inspect",
                 "vectis.capabilities.inspect",
+                "vectis.templates.inspect",
             ],
         )
         self.assertIn("completionProvider", capabilities)
@@ -807,6 +808,64 @@ class LanguageServerTests(unittest.TestCase):
                 }
             )[0]["result"]
             self.assertFalse(escaped["ok"])
+
+
+    def test_template_inspection_is_read_only_and_deterministic(
+        self,
+    ) -> None:
+        catalog = self.server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 57,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": "vectis.templates.inspect",
+                    "arguments": [{}],
+                },
+            }
+        )[0]["result"]
+        self.assertTrue(catalog["ok"])
+        self.assertEqual(
+            catalog["catalog"]["schema"],
+            "vectis.project-templates/v1",
+        )
+
+        preview = self.server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 58,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": "vectis.templates.inspect",
+                    "arguments": [
+                        {"name": "release-gate"}
+                    ],
+                },
+            }
+        )[0]["result"]
+        self.assertTrue(preview["ok"])
+        self.assertEqual(
+            preview["template"]["id"],
+            "release-gate",
+        )
+        self.assertTrue(
+            preview["template"]["files"]
+        )
+
+        missing = self.server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 59,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": "vectis.templates.inspect",
+                    "arguments": [
+                        {"name": "missing-template"}
+                    ],
+                },
+            }
+        )[0]["result"]
+        self.assertFalse(missing["ok"])
 
     def test_diagnostic_range_uses_utf16_units(self) -> None:
         source = 'mission "😀" { publish missing; }'

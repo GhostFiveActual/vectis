@@ -18,6 +18,7 @@ from vectis.diagnostic import Diagnostic, DiagnosticError
 from vectis.editor import completion_items, document_symbols, hover_info
 from vectis.formatter import format_program
 from vectis.history import execution_history
+from vectis.templates import template_catalog, template_preview
 from vectis.lsp_workspace import (
     load_workspace_program,
     navigation_workspace,
@@ -502,6 +503,7 @@ class LanguageServer:
                                     "vectis.graph.inspect",
                                     "vectis.history.inspect",
                                     "vectis.capabilities.inspect",
+                                    "vectis.templates.inspect",
                                 ],
                             },
                         },
@@ -969,6 +971,7 @@ class LanguageServer:
                 "vectis.graph.inspect",
                 "vectis.history.inspect",
                 "vectis.capabilities.inspect",
+                "vectis.templates.inspect",
             }:
                 return [
                     _error_response(
@@ -978,6 +981,67 @@ class LanguageServer:
                             "unsupported VECTIS command: "
                             f"{command}"
                         ),
+                    )
+                ]
+
+            if command == "vectis.templates.inspect":
+                if (
+                    not isinstance(arguments, list)
+                    or len(arguments) != 1
+                    or not isinstance(arguments[0], dict)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message=(
+                                "vectis.templates.inspect requires one "
+                                "argument object"
+                            ),
+                        )
+                    ]
+
+                template_name = arguments[0].get("name")
+                if (
+                    template_name is not None
+                    and not isinstance(template_name, str)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message="template name must be a string",
+                        )
+                    ]
+
+                try:
+                    payload = (
+                        template_catalog()
+                        if template_name is None
+                        else template_preview(template_name)
+                    )
+                except ValueError as exc:
+                    return [
+                        _response(
+                            message_id,
+                            {
+                                "ok": False,
+                                "error": str(exc),
+                            },
+                        )
+                    ]
+
+                return [
+                    _response(
+                        message_id,
+                        {
+                            (
+                                "catalog"
+                                if template_name is None
+                                else "template"
+                            ): payload,
+                            "ok": True,
+                        },
                     )
                 ]
 

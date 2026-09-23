@@ -29,6 +29,11 @@ from vectis.examples import CANONICAL_EXAMPLES, example_manifest
 from vectis.formatter import format_program
 from vectis.history import execution_history
 from vectis.capability_config import capability_configuration
+from vectis.templates import (
+    template_catalog,
+    template_preview,
+    write_project_template,
+)
 from vectis.lexer import Lexer, LexerError
 from vectis.modules import ModuleError, load_program_file
 from vectis.parser import ParserError, parse, parse_expression
@@ -1062,19 +1067,28 @@ def command_report(args: argparse.Namespace) -> int:
 
 def command_init(args: argparse.Namespace) -> int:
     """Create a Ghost Five branded VECTIS project scaffold."""
-    created = initialize_project(
-        Path(args.path),
-        force=args.force,
-    )
-    _print_json(
-        {
-            "root": str(Path(args.path).resolve()),
-            "created": [
-                str(path)
-                for path in created
-            ],
-        }
-    )
+    if args.template is None:
+        created = initialize_project(
+            Path(args.path),
+            force=args.force,
+        )
+    else:
+        created = write_project_template(
+            args.template,
+            Path(args.path),
+            force=args.force,
+        )
+
+    payload = {
+        "root": str(Path(args.path).resolve()),
+        "created": [
+            str(path)
+            for path in created
+        ],
+    }
+    if args.template is not None:
+        payload["template"] = args.template
+    _print_json(payload)
     return 0
 
 
@@ -1083,6 +1097,18 @@ def command_test(args: argparse.Namespace) -> int:
     result = test_project(Path(args.path))
     _print_json(result)
     return 0 if result["failed"] == 0 else 1
+
+
+def command_templates(args: argparse.Namespace) -> int:
+    """List or preview deterministic built-in VECTIS project templates."""
+    if args.name is None:
+        _print_json(template_catalog())
+        return 0
+
+    _print_json(
+        template_preview(args.name)
+    )
+    return 0
 
 
 def command_examples(args: argparse.Namespace) -> int:
@@ -1640,6 +1666,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="replace scaffold files that already exist",
     )
+    init_parser.add_argument(
+        "--template",
+        metavar="NAME",
+        help=(
+            "materialize one deterministic built-in project template; "
+            "default init behavior is unchanged when omitted"
+        ),
+    )
     init_parser.set_defaults(handler=command_init)
 
     test_parser = commands.add_parser(
@@ -1652,6 +1686,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=".",
     )
     test_parser.set_defaults(handler=command_test)
+
+    templates_parser = commands.add_parser(
+        "templates",
+        help="list or preview deterministic built-in project templates",
+    )
+    templates_parser.add_argument(
+        "name",
+        nargs="?",
+    )
+    templates_parser.set_defaults(
+        handler=command_templates
+    )
 
     examples_parser = commands.add_parser(
         "examples",

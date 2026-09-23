@@ -42,7 +42,8 @@ The current server supports:
 16. `workspace/executeCommand` with `vectis.graph.inspect` for read-only execution graph inspection.
 17. `workspace/executeCommand` with `vectis.history.inspect` for project-bounded execution receipt history.
 18. `workspace/executeCommand` with `vectis.capabilities.inspect` for project-bounded authority configuration preview.
-19. `textDocument/publishDiagnostics` notifications.
+19. `workspace/executeCommand` with `vectis.templates.inspect` for read-only built-in project template inspection.
+20. `textDocument/publishDiagnostics` notifications.
 
 Diagnostics use the stable VECTIS diagnostic code as the LSP code and report parser, lexer, module-resolution, and semantic failures through the same compiler contracts used by command-line validation.
 
@@ -107,6 +108,14 @@ Mission compilation uses the current open-buffer workspace. Relative profiles ar
 The response reports the plan fingerprint, required and requested capabilities, planned action operation and capability pairs, configured capability names, registered profile operations, missing authority, unused grants, unresolved authority nodes, and the existing profile-shape attestation when a profile is supplied.
 
 The command is read-only. It does not create runtime capability grants, select a profile for later execution, invoke actions, or expose filesystem roots, executable paths, or environment values. Runtime authority still requires explicit execution options.
+
+## Project templates
+
+`workspace/executeCommand` with `vectis.templates.inspect` returns the deterministic built-in project template catalog or one template preview. Clients pass one argument object and may include a string `name`.
+
+An omitted name returns catalog metadata. A named preview includes the ordered relative file paths, UTF-8 content, and SHA-256 digest for each file.
+
+The editor command is read-only. It does not write project files, download templates, discover remote registries, execute missions, or activate action profiles.
 
 ## Source coordinates
 
