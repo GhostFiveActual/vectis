@@ -16,12 +16,12 @@ from vectis.diagnostic import Diagnostic, DiagnosticError
 from vectis.editor import completion_items, document_symbols, hover_info
 from vectis.formatter import format_program
 from vectis.lsp_workspace import (
-    function_definition,
-    function_references,
-    function_rename,
     load_workspace_program,
     navigation_workspace,
     overlay_map,
+    symbol_definition,
+    symbol_references,
+    symbol_rename,
     uri_path,
 )
 from vectis.lsp_semantic import (
@@ -511,7 +511,7 @@ class LanguageServer:
                         )
                         if workspace is not None:
                             result = (
-                                function_definition(
+                                symbol_definition(
                                     workspace,
                                     path=path,
                                     line=line,
@@ -582,7 +582,7 @@ class LanguageServer:
                         )
                         if workspace is not None:
                             result = (
-                                function_references(
+                                symbol_references(
                                     workspace,
                                     path=path,
                                     line=line,
@@ -668,7 +668,7 @@ class LanguageServer:
                     )
                 )
                 result = (
-                    function_rename(
+                    symbol_rename(
                         workspace,
                         path=path,
                         line=line,

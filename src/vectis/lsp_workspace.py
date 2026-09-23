@@ -1,6 +1,6 @@
 # GHOST FIVE // VECTIS
-# Resolves editor workspaces with unsaved overlays and deterministic function navigation.
-"""Overlay-aware VECTIS workspace loading and pure-function navigation."""
+# Resolves editor workspaces with unsaved overlays and deterministic symbol navigation.
+"""Overlay-aware VECTIS workspace loading and deterministic symbol navigation."""
 
 from __future__ import annotations
 
@@ -11,11 +11,16 @@ from typing import Mapping
 from urllib.parse import unquote, urlparse
 
 from vectis.ast import (
+    ActionStatement,
+    AnalyzeDeclaration,
     CallExpression,
     FunctionDeclaration,
     ImportStatement,
+    LetDeclaration,
     Node,
     Program,
+    Reference,
+    SourceDeclaration,
     Statement,
 )
 from vectis.diagnostic import DiagnosticError
@@ -44,6 +49,16 @@ class WorkspaceProgram:
 @dataclass(frozen=True, slots=True)
 class FunctionOccurrence:
     """One exact user-function declaration or call token."""
+
+    name: str
+    path: Path
+    span: SourceSpan
+    declaration: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ValueOccurrence:
+    """One exact executable value declaration or reference token."""
 
     name: str
     path: Path
@@ -630,6 +645,332 @@ def function_occurrences(
     )
 
 
+
+def symbol_definition(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+) -> dict[str, object] | None:
+    """Return the definition for the supported symbol under the cursor."""
+    if _function_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    ) is not None:
+        return function_definition(
+            workspace,
+            path=path,
+            line=line,
+            character=character,
+        )
+    return value_definition(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+
+
+def symbol_references(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+    include_declaration: bool,
+) -> list[dict[str, object]]:
+    """Return references for the supported symbol under the cursor."""
+    if _function_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    ) is not None:
+        return function_references(
+            workspace,
+            path=path,
+            line=line,
+            character=character,
+            include_declaration=include_declaration,
+        )
+    return value_references(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+        include_declaration=include_declaration,
+    )
+
+
+def symbol_rename(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+    new_name: str,
+) -> dict[str, object] | None:
+    """Return a WorkspaceEdit for the supported symbol under the cursor."""
+    if _function_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    ) is not None:
+        return function_rename(
+            workspace,
+            path=path,
+            line=line,
+            character=character,
+            new_name=new_name,
+        )
+    return value_rename(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+        new_name=new_name,
+    )
+
+
+def value_definition(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+) -> dict[str, object] | None:
+    """Return the unique executable value declaration under the cursor."""
+    name = _value_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+    if name is None:
+        return None
+
+    declarations = [
+        item
+        for item in value_occurrences(workspace)
+        if item.name == name and item.declaration
+    ]
+    if len(declarations) != 1:
+        return None
+    return _location(declarations[0])
+
+
+def value_references(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+    include_declaration: bool,
+) -> list[dict[str, object]]:
+    """Return deterministic references for one executable value."""
+    name = _value_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+    if name is None:
+        return []
+
+    occurrences = [
+        item
+        for item in value_occurrences(workspace)
+        if item.name == name
+    ]
+    declarations = [
+        item for item in occurrences if item.declaration
+    ]
+    if len(declarations) != 1:
+        return []
+
+    return [
+        _location(item)
+        for item in occurrences
+        if include_declaration or not item.declaration
+    ]
+
+
+def value_rename(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+    new_name: str,
+) -> dict[str, object] | None:
+    """Return a WorkspaceEdit for one executable value symbol."""
+    name = _value_name_at(
+        workspace,
+        path=path,
+        line=line,
+        character=character,
+    )
+    if name is None:
+        return None
+
+    if not valid_value_name(new_name):
+        raise ValueError(
+            "new value name must be a non-reserved VECTIS identifier"
+        )
+
+    occurrences = [
+        item
+        for item in value_occurrences(workspace)
+        if item.name == name
+    ]
+    declarations = [
+        item for item in occurrences if item.declaration
+    ]
+    if len(declarations) != 1:
+        return None
+
+    existing = {
+        item.name
+        for item in value_occurrences(workspace)
+        if item.declaration
+    }
+    if new_name != name and new_name in existing:
+        raise ValueError(
+            "new value name conflicts with an existing executable value"
+        )
+
+    changes: dict[str, list[dict[str, object]]] = {}
+    for item in occurrences:
+        uri = path_uri(item.path)
+        changes.setdefault(uri, []).append(
+            {
+                "range": _lsp_range(item.span),
+                "newText": new_name,
+            }
+        )
+
+    return {
+        "changes": {
+            uri: changes[uri]
+            for uri in sorted(changes)
+        }
+    }
+
+
+def valid_value_name(name: str) -> bool:
+    """Return whether a rename target is valid for executable values."""
+    return (
+        isinstance(name, str)
+        and bool(_IDENTIFIER.fullmatch(name))
+        and name not in KEYWORDS
+        and name not in {"true", "false"}
+    )
+
+
+def value_occurrences(
+    workspace: WorkspaceProgram,
+) -> tuple[ValueOccurrence, ...]:
+    """Return entry-source executable value declarations and references."""
+    source_map = dict(workspace.sources)
+    program_map = dict(workspace.programs)
+    program = program_map.get(workspace.entry)
+    source = source_map.get(workspace.entry)
+    if program is None or source is None:
+        return ()
+
+    tokens = Lexer(
+        source,
+        file=str(workspace.entry),
+    ).tokenize()
+    result: list[ValueOccurrence] = []
+    declaration_types = (
+        SourceDeclaration,
+        LetDeclaration,
+        AnalyzeDeclaration,
+        ActionStatement,
+    )
+
+    for statement in program.statements:
+        if isinstance(statement, FunctionDeclaration):
+            continue
+
+        for node in _walk(statement):
+            if isinstance(node, declaration_types):
+                span = _identifier_span(
+                    tokens,
+                    node.span,
+                    node.name,
+                )
+                if span is not None:
+                    result.append(
+                        ValueOccurrence(
+                            name=node.name,
+                            path=workspace.entry,
+                            span=span,
+                            declaration=True,
+                        )
+                    )
+                continue
+
+            if isinstance(node, Reference):
+                result.append(
+                    ValueOccurrence(
+                        name=node.name,
+                        path=workspace.entry,
+                        span=node.span,
+                        declaration=False,
+                    )
+                )
+
+    unique = {
+        (
+            item.name,
+            str(item.path),
+            item.span.start.line,
+            item.span.start.column,
+            item.span.end.line,
+            item.span.end.column,
+            item.declaration,
+        ): item
+        for item in result
+    }
+
+    return tuple(
+        sorted(
+            unique.values(),
+            key=lambda item: (
+                str(item.path),
+                item.span.start.line,
+                item.span.start.column,
+                not item.declaration,
+            ),
+        )
+    )
+
+
+def _value_name_at(
+    workspace: WorkspaceProgram,
+    *,
+    path: Path,
+    line: int,
+    character: int,
+) -> str | None:
+    canonical = path.expanduser().resolve()
+    for item in value_occurrences(workspace):
+        if item.path != canonical:
+            continue
+        if _contains_lsp_position(
+            item.span,
+            line=line,
+            character=character,
+        ):
+            return item.name
+    return None
+
 def _function_name_at(
     workspace: WorkspaceProgram,
     *,
@@ -794,7 +1135,7 @@ def _lsp_range(
 
 
 def _location(
-    occurrence: FunctionOccurrence,
+    occurrence: FunctionOccurrence | ValueOccurrence,
 ) -> dict[str, object]:
     return {
         "uri": path_uri(
@@ -819,6 +1160,7 @@ def _inside_root(
 
 __all__ = [
     "FunctionOccurrence",
+    "ValueOccurrence",
     "WorkspaceProgram",
     "function_definition",
     "function_occurrences",
@@ -828,6 +1170,14 @@ __all__ = [
     "navigation_workspace",
     "overlay_map",
     "path_uri",
+    "symbol_definition",
+    "symbol_references",
+    "symbol_rename",
     "uri_path",
     "valid_function_name",
+    "valid_value_name",
+    "value_definition",
+    "value_occurrences",
+    "value_references",
+    "value_rename",
 ]

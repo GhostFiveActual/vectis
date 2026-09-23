@@ -34,9 +34,9 @@ The current server supports:
 8. `textDocument/completion` with keywords, pure built-ins, and standard actions.
 9. `textDocument/hover` for language keywords, built-ins, and standard actions.
 10. `textDocument/documentSymbol` for functions, missions, stages, values, and actions.
-11. `textDocument/definition` for user-defined pure functions.
-12. `textDocument/references` for reachable user-function calls.
-13. `textDocument/rename` for reachable user-function declarations and calls.
+11. `textDocument/definition` for user-defined pure functions and executable values.
+12. `textDocument/references` for reachable function calls and executable value references.
+13. `textDocument/rename` for supported function and executable value symbols.
 14. `textDocument/signatureHelp` for built-ins and user-defined pure functions.
 15. `textDocument/semanticTokens/full` for deterministic language roles.
 16. `textDocument/publishDiagnostics` notifications.
@@ -53,11 +53,11 @@ Opening, changing, or saving a file republishes diagnostics for all open documen
 
 ## Source navigation
 
-Definition, references, and rename operate on user-defined pure functions across the reachable deterministic import graph.
+Definition, references, and rename operate on user-defined pure functions across the reachable deterministic import graph and on executable value bindings in the entry source. Executable values include `source`, `let`, `analyze`, and `action` result declarations, including declarations and references nested in stages and conditional branches.
 
-When navigation starts from an imported module, the server prefers the widest currently open entry workspace containing that file. Rename returns a normal LSP `WorkspaceEdit` and does not modify source files itself.
+When navigation starts from an imported module, the server prefers the widest currently open entry workspace containing that file. Imported modules remain pure-function-only, so executable value navigation stays in the entry source. Pure-function parameters are not treated as executable values.
 
-Built-in functions have no source definition. Mission-local value navigation is outside the current navigation contract.
+Rename returns a normal LSP `WorkspaceEdit` and does not modify source files itself. Value rename changes only the unique declaration and its canonical `Reference` AST occurrences and rejects ambiguous declarations, declaration collisions, keywords, and contextual boolean literals. Built-in functions have no source definition.
 
 ## Signature help
 
