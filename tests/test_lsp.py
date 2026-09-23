@@ -49,6 +49,7 @@ class LanguageServerTests(unittest.TestCase):
             [
                 "vectis.graph.inspect",
                 "vectis.history.inspect",
+                "vectis.capabilities.inspect",
             ],
         )
         self.assertIn("completionProvider", capabilities)
@@ -717,6 +718,95 @@ class LanguageServerTests(unittest.TestCase):
             self.assertFalse(
                 escaped["ok"]
             )
+
+    def test_capability_configuration_uses_overlay_and_project_profile(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n",
+                encoding="utf-8",
+            )
+            workspace = root / "workspace"
+            workspace.mkdir()
+            profile = root / "actions.toml"
+            profile.write_text(
+                (
+                    "# GHOST FIVE // VECTIS\n"
+                    "# Capability configuration LSP test.\n"
+                    "[actions.filesystem]\n"
+                    'roots = ["workspace"]\n'
+                ),
+                encoding="utf-8",
+            )
+            entry = root / "main.vectis"
+            entry.write_text(
+                'mission "Saved" { source stale true; publish stale; }\n',
+                encoding="utf-8",
+            )
+            uri = entry.resolve().as_uri()
+            self.server.documents[uri] = (
+                "// GHOST FIVE // VECTIS\n"
+                "// Capability configuration overlay test.\n"
+                'mission "Overlay" {\n'
+                '    action content "filesystem.read_text" '
+                'using "filesystem" {path: "input.txt"};\n'
+                '    publish content;\n'
+                '}\n'
+            )
+
+            result = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 55,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": "vectis.capabilities.inspect",
+                        "arguments": [
+                            {
+                                "uri": uri,
+                                "profile": "actions.toml",
+                            }
+                        ],
+                    },
+                }
+            )[0]["result"]
+
+            self.assertTrue(result["ok"])
+            preview = result["configuration"]
+            self.assertTrue(preview["satisfied"])
+            self.assertEqual(
+                preview["plan"]["actions"][0]["operation"],
+                "filesystem.read_text",
+            )
+            self.assertEqual(
+                preview["configuration"]["profile"]["source"],
+                "actions.toml",
+            )
+            rendered = json.dumps(result, sort_keys=True)
+            self.assertNotIn(
+                str(root.resolve()),
+                rendered,
+            )
+
+            escaped = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 56,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": "vectis.capabilities.inspect",
+                        "arguments": [
+                            {
+                                "uri": uri,
+                                "profile": "../outside.toml",
+                            }
+                        ],
+                    },
+                }
+            )[0]["result"]
+            self.assertFalse(escaped["ok"])
 
     def test_diagnostic_range_uses_utf16_units(self) -> None:
         source = 'mission "😀" { publish missing; }'

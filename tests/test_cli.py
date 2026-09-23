@@ -79,6 +79,7 @@ class CliTests(unittest.TestCase):
             "run",
             "receipt",
             "history",
+            "capability-config",
             "mission",
             "audit",
             "fingerprint",
@@ -624,6 +625,61 @@ class CliTests(unittest.TestCase):
             self.assertEqual(
                 payload["entries"][0]["receipt"],
                 "run.json",
+            )
+
+    def test_capability_config_previews_explicit_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            profile = root / "actions.toml"
+            profile.write_text(
+                (
+                    "# GHOST FIVE // VECTIS\n"
+                    "# Capability configuration CLI test.\n"
+                    "[actions.filesystem]\n"
+                    'roots = ["workspace"]\n'
+                ),
+                encoding="utf-8",
+            )
+            mission = root / "main.vectis"
+            mission.write_text(
+                (
+                    "// GHOST FIVE // VECTIS\n"
+                    "// Capability configuration CLI test.\n"
+                    'mission "Configured" {\n'
+                    '    action content "filesystem.read_text" '
+                    'using "filesystem" {path: "input.txt"};\n'
+                    '    publish content;\n'
+                    '}\n'
+                ),
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "capability-config",
+                    "--actions-config",
+                    str(profile),
+                    str(mission),
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertTrue(payload["satisfied"])
+            self.assertEqual(
+                payload["configuration"]["profile"]["source"],
+                "actions.toml",
+            )
+            self.assertEqual(
+                payload["missing"]["action_operations"],
+                [],
+            )
+            self.assertNotIn(
+                str(root.resolve()),
+                stdout,
             )
 
     def test_actions_exposes_typed_standard_contracts(self):

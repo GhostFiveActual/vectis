@@ -28,6 +28,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 12. [RFC 0012: LSP execution graph inspection](0012-lsp-graph-inspection.md)
 13. [RFC 0013: LSP source span synchronization](0013-lsp-source-span-synchronization.md)
 14. [RFC 0014: Execution history](0014-execution-history.md)
+15. [RFC 0015: Capability configuration preview](0015-capability-configuration-preview.md)
 
 ## When an RFC is required
 
