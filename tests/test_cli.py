@@ -80,6 +80,7 @@ class CliTests(unittest.TestCase):
             "receipt",
             "history",
             "capability-config",
+            "templates",
             "mission",
             "audit",
             "fingerprint",
@@ -903,6 +904,74 @@ class CliTests(unittest.TestCase):
                     "secret_values_attested"
                 ]
             )
+
+    def test_templates_list_preview_and_materialize(self) -> None:
+        code, stdout, stderr = self.invoke(
+            ["templates"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        catalog = json.loads(stdout)
+        self.assertEqual(
+            catalog["schema"],
+            "vectis.project-templates/v1",
+        )
+        ids = [
+            item["id"]
+            for item in catalog["templates"]
+        ]
+        self.assertIn(
+            "release-gate",
+            ids,
+        )
+
+        code, stdout, stderr = self.invoke(
+            [
+                "templates",
+                "release-gate",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        preview = json.loads(stdout)
+        self.assertEqual(
+            preview["id"],
+            "release-gate",
+        )
+        self.assertTrue(preview["files"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "project"
+            code, stdout, stderr = self.invoke(
+                [
+                    "init",
+                    str(project),
+                    "--template",
+                    "release-gate",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            created = json.loads(stdout)
+            self.assertEqual(
+                created["template"],
+                "release-gate",
+            )
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "test",
+                    str(project),
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            result = json.loads(stdout)
+            self.assertEqual(
+                result["failed"],
+                0,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,28 @@ Validate every mission in the project:
 vectis test .
 ```
 
+## Project templates
+
+List the deterministic built-in project templates:
+
+```bash
+vectis templates
+```
+
+Preview one template without writing files:
+
+```bash
+vectis templates release-gate
+```
+
+Materialize a selected template:
+
+```bash
+vectis init ./release-project --template release-gate
+```
+
+The template catalog is package-local. VECTIS does not download templates, discover a remote registry, execute generated missions, or activate included action-profile examples. Existing destination files fail closed unless `--force` is selected explicitly.
+
 ## Stages
 
 Large missions can group related statements under named stages:
