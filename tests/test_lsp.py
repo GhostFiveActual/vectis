@@ -38,6 +38,10 @@ class LanguageServerTests(unittest.TestCase):
             capabilities["signatureHelpProvider"]["triggerCharacters"],
             ["(", ","],
         )
+        self.assertIn("semanticTokensProvider", capabilities)
+        self.assertTrue(
+            capabilities["semanticTokensProvider"]["full"]
+        )
         self.assertIn("completionProvider", capabilities)
 
     def test_open_publishes_parser_diagnostic(self) -> None:

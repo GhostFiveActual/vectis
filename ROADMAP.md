@@ -40,7 +40,7 @@ External authority remains explicit regardless of syntax growth.
 
 ## Mission Control
 
-The dependency-free Language Server Protocol surface provides editor diagnostics and canonical formatting through the same compiler used by the CLI. User-defined pure functions support cross-file definition, references, and rename through an overlay-aware module workspace, so unsaved imported buffers participate in semantic diagnostics without stale disk substitution. Signature help reports built-in arity and user-defined pure-function parameters through the same editor state, including transient incomplete call sites. Product direction includes semantic tokens, mission-local value navigation, deeper graph inspection, source span synchronization, execution history, capability configuration, templates, and module browsing.
+The dependency-free Language Server Protocol surface provides editor diagnostics and canonical formatting through the same compiler used by the CLI. User-defined pure functions support cross-file definition, references, and rename through an overlay-aware module workspace, so unsaved imported buffers participate in semantic diagnostics without stale disk substitution. Signature help reports built-in arity and user-defined pure-function parameters through the same editor state, including transient incomplete call sites. Full-document semantic tokens derive stable language roles and UTF-16 coordinates from the canonical lexer without duplicating the language grammar in editor integrations. Product direction includes mission-local value navigation, deeper graph inspection, source span synchronization, execution history, capability configuration, templates, and module browsing.
 
 ## Compatibility
 

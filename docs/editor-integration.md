@@ -38,7 +38,8 @@ The current server supports:
 12. `textDocument/references` for reachable user-function calls.
 13. `textDocument/rename` for reachable user-function declarations and calls.
 14. `textDocument/signatureHelp` for built-ins and user-defined pure functions.
-15. `textDocument/publishDiagnostics` notifications.
+15. `textDocument/semanticTokens/full` for deterministic language roles.
+16. `textDocument/publishDiagnostics` notifications.
 
 Diagnostics use the stable VECTIS diagnostic code as the LSP code and report parser, lexer, module-resolution, and semantic failures through the same compiler contracts used by command-line validation.
 
@@ -65,6 +66,14 @@ Built-in functions have no source definition. Mission-local value navigation is 
 The signature helper uses the same overlay-aware workspace as navigation when the current source graph is complete. If the current call site is temporarily incomplete, declaration headers can still be recovered from open buffers through the canonical lexer. This keeps an unsaved imported function available at the normal `(` and `,` signature triggers without changing parser or compiler behavior.
 
 Nested calls, strings, line comments, list literals, and object literals are tracked so commas inside nested values do not advance the outer active parameter.
+
+## Semantic tokens
+
+`textDocument/semanticTokens/full` reports deterministic language roles from the canonical VECTIS lexer. The server advertises a stable legend for keywords, strings, numbers, operators, functions, parameters, variables, and properties, with `declaration` as the initial modifier.
+
+Function declarations and call targets are reported as functions. Function parameters preserve parameter identity within the pure-function body. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
+
+Semantic token positions use UTF-16 code units. Multi-line lexical tokens are split into line-local records before LSP delta encoding. If lexical analysis fails, semantic highlighting returns an empty token stream and does not alter compiler diagnostics or execution behavior.
 
 ## Language intelligence
 
