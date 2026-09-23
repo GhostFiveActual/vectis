@@ -28,6 +28,7 @@ from vectis.lsp_semantic import (
     SEMANTIC_TOKEN_LEGEND,
     semantic_tokens,
 )
+from vectis.lsp_graph import graph_inspection
 from vectis.lsp_signature import signature_help
 from vectis.parser import parse
 
@@ -177,6 +178,61 @@ class LanguageServer:
             documents=self.documents,
         )
 
+    def _graph_inspection(
+        self,
+        uri: str,
+    ) -> dict[str, object]:
+        """Compile the current editor workspace into a structural graph view."""
+        source = self.documents.get(uri)
+        try:
+            path = _uri_path(uri)
+            if path is None:
+                if source is None:
+                    return {"ok": False, "diagnostics": []}
+                program = parse(source, file=uri)
+            else:
+                workspace = navigation_workspace(
+                    path,
+                    documents=self.documents,
+                )
+                program = workspace.program
+
+            result = compile_program(program)
+            if result.graph is None:
+                return {
+                    "ok": False,
+                    "diagnostics": [
+                        _lsp_diagnostic(diagnostic)
+                        for diagnostic in result.diagnostics
+                    ],
+                }
+
+            return {
+                "ok": True,
+                "inspection": graph_inspection(result.graph),
+            }
+        except DiagnosticError as exc:
+            return {
+                "ok": False,
+                "diagnostics": [_lsp_diagnostic(exc.diagnostic)],
+            }
+        except (OSError, UnicodeError, ValueError) as exc:
+            return {
+                "ok": False,
+                "diagnostics": [
+                    {
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 1},
+                        },
+                        "severity": 1,
+                        "code": "LSP001",
+                        "source": "vectis",
+                        "message": str(exc),
+                    }
+                ],
+            }
+
     def _format(self, uri: str) -> list[dict[str, object]]:
         source = self.documents.get(uri)
         if source is None:
@@ -242,6 +298,9 @@ class LanguageServer:
                             "semanticTokensProvider": {
                                 "legend": SEMANTIC_TOKEN_LEGEND,
                                 "full": True,
+                            },
+                            "executeCommandProvider": {
+                                "commands": ["vectis.graph.inspect"],
                             },
                         },
                         "serverInfo": {
@@ -697,6 +756,47 @@ class LanguageServer:
                 _response(
                     message_id,
                     result,
+                )
+            ]
+
+        if method == "workspace/executeCommand":
+            command = params.get("command")
+            arguments = params.get("arguments")
+
+            if command != "vectis.graph.inspect":
+                return [
+                    _error_response(
+                        message_id,
+                        code=_LSP_ERROR_INVALID_PARAMS,
+                        message=(
+                            "unsupported VECTIS command: "
+                            f"{command}"
+                        ),
+                    )
+                ]
+
+            if (
+                not isinstance(arguments, list)
+                or len(arguments) != 1
+                or not isinstance(arguments[0], dict)
+                or not isinstance(arguments[0].get("uri"), str)
+            ):
+                return [
+                    _error_response(
+                        message_id,
+                        code=_LSP_ERROR_INVALID_PARAMS,
+                        message=(
+                            "vectis.graph.inspect requires "
+                            "one argument object with uri"
+                        ),
+                    )
+                ]
+
+            uri = arguments[0]["uri"]
+            return [
+                _response(
+                    message_id,
+                    self._graph_inspection(uri),
                 )
             ]
 

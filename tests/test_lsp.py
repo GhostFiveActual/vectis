@@ -42,6 +42,11 @@ class LanguageServerTests(unittest.TestCase):
         self.assertTrue(
             capabilities["semanticTokensProvider"]["full"]
         )
+        self.assertIn("executeCommandProvider", capabilities)
+        self.assertEqual(
+            capabilities["executeCommandProvider"]["commands"],
+            ["vectis.graph.inspect"],
+        )
         self.assertIn("completionProvider", capabilities)
 
     def test_open_publishes_parser_diagnostic(self) -> None:
@@ -493,6 +498,89 @@ class LanguageServerTests(unittest.TestCase):
                 }
             )[0]["result"]
             self.assertEqual(len(rename["changes"][uri]), 2)
+
+
+    def test_graph_inspection_uses_unsaved_document(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            entry.write_text(
+                (
+                    'mission "Saved" {\n'
+                    '    source stale 1;\n'
+                    '    publish stale;\n'
+                    '}\n'
+                ),
+                encoding="utf-8",
+            )
+            uri = entry.resolve().as_uri()
+            self.server.documents[uri] = (
+                'mission "Graph" {\n'
+                '    stage "Inputs" {\n'
+                '        source ready true;\n'
+                '    }\n'
+                '    stage "Decision" {\n'
+                '        let approved ready;\n'
+                '        when approved {\n'
+                '            publish "yes";\n'
+                '        }\n'
+                '    }\n'
+                '}\n'
+            )
+
+            result = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 50,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": "vectis.graph.inspect",
+                        "arguments": [{"uri": uri}],
+                    },
+                }
+            )[0]["result"]
+
+            self.assertTrue(result["ok"])
+            inspection = result["inspection"]
+            ids = {item["id"] for item in inspection["nodes"]}
+            self.assertIn("ready", ids)
+            self.assertIn("approved", ids)
+            self.assertNotIn("stale", ids)
+            self.assertEqual(len(inspection["fingerprint"]), 64)
+            self.assertTrue(
+                all("value" not in item for item in inspection["nodes"])
+            )
+
+    def test_graph_inspection_failures_are_structured(self) -> None:
+        self.server.documents[self.uri] = 'mission "Broken" {'
+
+        result = self.server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 51,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": "vectis.graph.inspect",
+                    "arguments": [{"uri": self.uri}],
+                },
+            }
+        )[0]["result"]
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["diagnostics"])
+
+        invalid = self.server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 52,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": "vectis.graph.inspect",
+                    "arguments": [],
+                },
+            }
+        )[0]
+        self.assertEqual(invalid["error"]["code"], -32602)
 
 
 if __name__ == "__main__":
