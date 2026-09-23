@@ -24,6 +24,10 @@ from vectis.lsp_workspace import (
     overlay_map,
     uri_path,
 )
+from vectis.lsp_semantic import (
+    SEMANTIC_TOKEN_LEGEND,
+    semantic_tokens,
+)
 from vectis.lsp_signature import signature_help
 from vectis.parser import parse
 
@@ -235,6 +239,10 @@ class LanguageServer:
                                 "triggerCharacters": ["(", ","],
                                 "retriggerCharacters": [","],
                             },
+                            "semanticTokensProvider": {
+                                "legend": SEMANTIC_TOKEN_LEGEND,
+                                "full": True,
+                            },
                         },
                         "serverInfo": {
                             "name": "vectis",
@@ -409,6 +417,41 @@ class LanguageServer:
                         ),
                     )
             return [_response(message_id, result)]
+
+        if method == "textDocument/semanticTokens/full":
+            document = params.get("textDocument")
+            uri = (
+                document.get("uri")
+                if isinstance(document, dict)
+                else None
+            )
+            source = (
+                self.documents.get(uri)
+                if isinstance(uri, str)
+                else None
+            )
+            if source is None and isinstance(uri, str):
+                path = _uri_path(uri)
+                if path is not None and path.is_file():
+                    source = path.read_text(encoding="utf-8")
+
+            result = (
+                semantic_tokens(
+                    source,
+                    file=uri,
+                )
+                if (
+                    source is not None
+                    and isinstance(uri, str)
+                )
+                else {"data": []}
+            )
+            return [
+                _response(
+                    message_id,
+                    result,
+                )
+            ]
 
         if method == "textDocument/documentSymbol":
             document = params.get("textDocument")
