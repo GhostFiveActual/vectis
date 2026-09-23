@@ -412,5 +412,88 @@ class LanguageServerTests(unittest.TestCase):
                 )
             )
 
+
+    def test_mission_value_definition_references_and_rename(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                'mission "Values" {\n'
+                "    source quality 96;\n"
+                "    let approved quality >= 90;\n"
+                "    publish approved;\n"
+                "}\n"
+            )
+            entry.write_text(
+                (
+                    'mission "Saved" {\n'
+                    '    source stale 1;\n'
+                    '    publish stale;\n'
+                    '}\n'
+                ),
+                encoding="utf-8",
+            )
+            uri = entry.resolve().as_uri()
+            self.server.documents[uri] = source
+
+            line = 2
+            character = source.splitlines()[line].index("quality") + 2
+
+            definition = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 40,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": {
+                            "line": line,
+                            "character": character,
+                        },
+                    },
+                }
+            )[0]["result"]
+            self.assertEqual(
+                definition["range"]["start"]["line"],
+                1,
+            )
+
+            references = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 41,
+                    "method": "textDocument/references",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": {
+                            "line": line,
+                            "character": character,
+                        },
+                        "context": {"includeDeclaration": True},
+                    },
+                }
+            )[0]["result"]
+            self.assertEqual(len(references), 2)
+
+            rename = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 42,
+                    "method": "textDocument/rename",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": {
+                            "line": line,
+                            "character": character,
+                        },
+                        "newName": "score",
+                    },
+                }
+            )[0]["result"]
+            self.assertEqual(len(rename["changes"][uri]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

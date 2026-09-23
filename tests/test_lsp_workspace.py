@@ -12,6 +12,10 @@ from vectis.lsp_workspace import (
     function_references,
     function_rename,
     load_workspace_program,
+    symbol_definition,
+    symbol_references,
+    symbol_rename,
+    value_occurrences,
 )
 
 
@@ -157,6 +161,243 @@ class LspWorkspaceTests(
                     for item in changes
                 )
             )
+
+
+    def test_mission_value_navigation_and_rename(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                'mission "Values" {\n'
+                "    source quality 96;\n"
+                "    let approved quality >= 90;\n"
+                "    publish approved;\n"
+                "}\n"
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+
+            line = 2
+            character = source.splitlines()[line].index("quality") + 2
+
+            definition = symbol_definition(
+                workspace,
+                path=entry,
+                line=line,
+                character=character,
+            )
+            self.assertIsNotNone(definition)
+            self.assertEqual(
+                definition["uri"],
+                entry.resolve().as_uri(),
+            )
+            self.assertEqual(
+                definition["range"]["start"]["line"],
+                1,
+            )
+
+            references = symbol_references(
+                workspace,
+                path=entry,
+                line=line,
+                character=character,
+                include_declaration=True,
+            )
+            self.assertEqual(len(references), 2)
+
+            edit = symbol_rename(
+                workspace,
+                path=entry,
+                line=line,
+                character=character,
+                new_name="score",
+            )
+            self.assertIsNotNone(edit)
+            changes = edit["changes"][entry.resolve().as_uri()]
+            self.assertEqual(len(changes), 2)
+            self.assertTrue(
+                all(item["newText"] == "score" for item in changes)
+            )
+
+    def test_all_executable_value_declarations_are_tracked(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                'mission "Values" {\n'
+                '    source path "input.txt";\n'
+                "    analyze insight path;\n"
+                '    action content "filesystem.read_text" '
+                'using "filesystem" {path: path};\n'
+                "    let output content;\n"
+                "    publish output;\n"
+                "}\n"
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+            occurrences = value_occurrences(workspace)
+            declarations = {
+                item.name
+                for item in occurrences
+                if item.declaration
+            }
+
+            self.assertEqual(
+                declarations,
+                {"path", "insight", "content", "output"},
+            )
+            reference_names = [
+                item.name
+                for item in occurrences
+                if not item.declaration
+            ]
+            self.assertEqual(reference_names.count("path"), 2)
+            self.assertIn("content", reference_names)
+            self.assertIn("output", reference_names)
+
+    def test_nested_value_references_keep_entry_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                'mission "Nested" {\n'
+                "    source ready true;\n"
+                '    stage "Check" {\n'
+                "        let score 96;\n"
+                "        when ready {\n"
+                "            publish score;\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+            occurrences = value_occurrences(workspace)
+
+            ready = [item for item in occurrences if item.name == "ready"]
+            score = [item for item in occurrences if item.name == "score"]
+            self.assertEqual(len(ready), 2)
+            self.assertEqual(len(score), 2)
+            self.assertEqual(sum(item.declaration for item in ready), 1)
+            self.assertEqual(sum(item.declaration for item in score), 1)
+
+    def test_function_parameters_are_not_mission_values(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                "function echo(value) {\n"
+                "    return value;\n"
+                "}\n"
+                'mission "Values" {\n'
+                '    source value "x";\n'
+                "    let output echo(value);\n"
+                "    publish output;\n"
+                "}\n"
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+            occurrences = value_occurrences(workspace)
+
+            value_items = [
+                item for item in occurrences if item.name == "value"
+            ]
+            self.assertEqual(len(value_items), 2)
+            self.assertEqual(
+                sum(item.declaration for item in value_items),
+                1,
+            )
+
+    def test_ambiguous_value_declarations_fail_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                'mission "Ambiguous" {\n'
+                "    source value 1;\n"
+                "    let value 2;\n"
+                "    publish value;\n"
+                "}\n"
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+            line = 3
+            character = source.splitlines()[line].index("value") + 2
+
+            self.assertIsNone(
+                symbol_definition(
+                    workspace,
+                    path=entry,
+                    line=line,
+                    character=character,
+                )
+            )
+            self.assertEqual(
+                symbol_references(
+                    workspace,
+                    path=entry,
+                    line=line,
+                    character=character,
+                    include_declaration=True,
+                ),
+                [],
+            )
+            self.assertIsNone(
+                symbol_rename(
+                    workspace,
+                    path=entry,
+                    line=line,
+                    character=character,
+                    new_name="renamed",
+                )
+            )
+
+    def test_value_rename_rejects_conflicts_and_reserved_names(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "main.vectis"
+            source = (
+                'mission "Values" {\n'
+                "    source first 1;\n"
+                "    let second first + 1;\n"
+                "    publish second;\n"
+                "}\n"
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+            line = 2
+            character = source.splitlines()[line].index("first") + 2
+
+            with self.assertRaises(ValueError):
+                symbol_rename(
+                    workspace,
+                    path=entry,
+                    line=line,
+                    character=character,
+                    new_name="second",
+                )
+
+            for reserved in ("mission", "true", "false"):
+                with self.assertRaises(ValueError):
+                    symbol_rename(
+                        workspace,
+                        path=entry,
+                        line=line,
+                        character=character,
+                        new_name=reserved,
+                    )
 
 
 if __name__ == "__main__":
