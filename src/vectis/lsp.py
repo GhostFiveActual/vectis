@@ -24,6 +24,7 @@ from vectis.lsp_workspace import (
     overlay_map,
     uri_path,
 )
+from vectis.lsp_signature import signature_help
 from vectis.parser import parse
 
 
@@ -230,6 +231,10 @@ class LanguageServer:
                             "definitionProvider": True,
                             "referencesProvider": True,
                             "renameProvider": True,
+                            "signatureHelpProvider": {
+                                "triggerCharacters": ["(", ","],
+                                "retriggerCharacters": [","],
+                            },
                         },
                         "serverInfo": {
                             "name": "vectis",
@@ -354,6 +359,54 @@ class LanguageServer:
                         source,
                         line=line,
                         character=character,
+                    )
+            return [_response(message_id, result)]
+
+        if method == "textDocument/signatureHelp":
+            document = params.get("textDocument")
+            position = params.get("position")
+            uri = (
+                document.get("uri")
+                if isinstance(document, dict)
+                else None
+            )
+            source = (
+                self.documents.get(uri)
+                if isinstance(uri, str)
+                else None
+            )
+            if source is None and isinstance(uri, str):
+                path = _uri_path(uri)
+                if path is not None and path.is_file():
+                    source = path.read_text(encoding="utf-8")
+
+            result = None
+            if source is not None and isinstance(position, dict):
+                line = position.get("line")
+                character = position.get("character")
+                if isinstance(line, int) and isinstance(character, int):
+                    workspace = None
+                    if isinstance(uri, str):
+                        try:
+                            workspace = self._navigation_workspace(uri)
+                        except (
+                            DiagnosticError,
+                            OSError,
+                            UnicodeError,
+                            ValueError,
+                        ):
+                            workspace = None
+
+                    result = signature_help(
+                        source,
+                        line=line,
+                        character=character,
+                        workspace=workspace,
+                        supplemental_sources=(
+                            self.documents[item]
+                            for item in sorted(self.documents)
+                            if item != uri
+                        ),
                     )
             return [_response(message_id, result)]
 

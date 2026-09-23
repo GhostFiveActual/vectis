@@ -37,7 +37,8 @@ The current server supports:
 11. `textDocument/definition` for user-defined pure functions.
 12. `textDocument/references` for reachable user-function calls.
 13. `textDocument/rename` for reachable user-function declarations and calls.
-14. `textDocument/publishDiagnostics` notifications.
+14. `textDocument/signatureHelp` for built-ins and user-defined pure functions.
+15. `textDocument/publishDiagnostics` notifications.
 
 Diagnostics use the stable VECTIS diagnostic code as the LSP code and report parser, lexer, module-resolution, and semantic failures through the same compiler contracts used by command-line validation.
 
@@ -56,6 +57,14 @@ Definition, references, and rename operate on user-defined pure functions across
 When navigation starts from an imported module, the server prefers the widest currently open entry workspace containing that file. Rename returns a normal LSP `WorkspaceEdit` and does not modify source files itself.
 
 Built-in functions have no source definition. Mission-local value navigation is outside the current navigation contract.
+
+## Signature help
+
+`textDocument/signatureHelp` reports callable information for deterministic pure functions while a call is being written. Built-in labels and arity come from the canonical evaluator registry. User-defined labels preserve the parameter names declared in VECTIS source.
+
+The signature helper uses the same overlay-aware workspace as navigation when the current source graph is complete. If the current call site is temporarily incomplete, declaration headers can still be recovered from open buffers through the canonical lexer. This keeps an unsaved imported function available at the normal `(` and `,` signature triggers without changing parser or compiler behavior.
+
+Nested calls, strings, line comments, list literals, and object literals are tracked so commas inside nested values do not advance the outer active parameter.
 
 ## Language intelligence
 

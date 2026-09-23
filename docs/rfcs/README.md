@@ -22,6 +22,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 6. [RFC 0006: Execution receipts and provenance](0006-execution-receipts.md)
 7. [RFC 0007: Action profile shape attestation](0007-action-profile-attestation.md)
 8. [RFC 0008: LSP function navigation and unsaved module overlays](0008-lsp-navigation-overlays.md)
+9. [RFC 0009: LSP signature help](0009-lsp-signature-help.md)
 
 ## When an RFC is required
 
