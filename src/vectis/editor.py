@@ -21,6 +21,10 @@ from vectis.ast import (
 )
 from vectis.evaluator import builtin_manifest
 from vectis.lexer import KEYWORDS
+from vectis.lsp_position import (
+    lsp_character_to_index,
+    source_span_to_lsp_range,
+)
 from vectis.parser import parse
 
 
@@ -110,9 +114,13 @@ def _word_at(source: str, line: int, character: int) -> str | None:
         return None
 
     text = lines[line]
-    if character < 0:
+    character_index = lsp_character_to_index(
+        text,
+        character,
+    )
+    if character_index is None:
         return None
-    character = min(character, len(text))
+    character = character_index
 
     for match in re.finditer(
         r"[A-Za-z_][A-Za-z0-9_]*"
@@ -215,39 +223,39 @@ def hover_info(
     return None
 
 
-def _range(node: object) -> dict[str, dict[str, int]]:
-    span = node.span
-    return {
-        "start": {
-            "line": max(0, span.start.line - 1),
-            "character": max(0, span.start.column - 1),
-        },
-        "end": {
-            "line": max(0, span.end.line - 1),
-            "character": max(0, span.end.column),
-        },
-    }
+def _range(
+    source: str,
+    node: object,
+) -> dict[str, dict[str, int]]:
+    return source_span_to_lsp_range(
+        source,
+        node.span,
+    )
 
 
 def _symbol(
     *,
     name: str,
     kind: int,
+    source: str,
     node: object,
     children: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     item: dict[str, object] = {
         "name": name,
         "kind": kind,
-        "range": _range(node),
-        "selectionRange": _range(node),
+        "range": _range(source, node),
+        "selectionRange": _range(source, node),
     }
     if children:
         item["children"] = children
     return item
 
 
-def _block_symbols(block: Block) -> list[dict[str, object]]:
+def _block_symbols(
+    source: str,
+    block: Block,
+) -> list[dict[str, object]]:
     symbols: list[dict[str, object]] = []
     for statement in block.statements:
         if isinstance(statement, Stage):
@@ -255,8 +263,9 @@ def _block_symbols(block: Block) -> list[dict[str, object]]:
                 _symbol(
                     name=statement.name,
                     kind=3,
+                    source=source,
                     node=statement,
-                    children=_block_symbols(statement.body),
+                    children=_block_symbols(source, statement.body),
                 )
             )
         elif isinstance(
@@ -272,14 +281,15 @@ def _block_symbols(block: Block) -> list[dict[str, object]]:
                 _symbol(
                     name=statement.name,
                     kind=13,
+                    source=source,
                     node=statement,
                 )
             )
         elif isinstance(statement, WhenStatement):
-            symbols.extend(_block_symbols(statement.body))
+            symbols.extend(_block_symbols(source, statement.body))
             if statement.otherwise is not None:
                 symbols.extend(
-                    _block_symbols(statement.otherwise)
+                    _block_symbols(source, statement.otherwise)
                 )
     return symbols
 
@@ -299,6 +309,7 @@ def document_symbols(
                 _symbol(
                     name=statement.name,
                     kind=12,
+                    source=source,
                     node=statement,
                 )
             )
@@ -307,8 +318,9 @@ def document_symbols(
                 _symbol(
                     name=statement.name,
                     kind=2,
+                    source=source,
                     node=statement,
-                    children=_block_symbols(statement.body),
+                    children=_block_symbols(source, statement.body),
                 )
             )
 

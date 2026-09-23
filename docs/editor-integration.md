@@ -86,6 +86,12 @@ Open buffers replace saved source before module resolution. When the selected fi
 
 Graph node values and runtime state are omitted from the inspection payload. Invalid source returns translated VECTIS diagnostics rather than a partial graph.
 
+## Source coordinates
+
+All editor-facing positions use one shared UTF-16 LSP conversion contract. Diagnostics, definition, references, rename edits, document symbols, semantic tokens, hover cursor lookup, and signature-help cursor lookup therefore agree even when source contains non-BMP Unicode text.
+
+Canonical compiler `SourcePosition` and `SourceSpan` objects remain one-based source coordinates. The editor layer converts them at the protocol boundary and converts incoming UTF-16 cursor characters back to Python source indexes before lookup.
+
 ## Language intelligence
 
 Completion candidates are generated from the same keyword, built-in function, and standard action registries used by VECTIS itself. Hover information reports language semantics and authority requirements from those registries. Document symbols are derived from the typed AST rather than textual pattern matching.

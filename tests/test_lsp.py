@@ -583,5 +583,29 @@ class LanguageServerTests(unittest.TestCase):
         self.assertEqual(invalid["error"]["code"], -32602)
 
 
+    def test_diagnostic_range_uses_utf16_units(self) -> None:
+        source = 'mission "😀" { publish missing; }'
+        self.server.documents[self.uri] = source
+        replies = self.server.handle(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": self.uri,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        diagnostic = replies[0]["params"]["diagnostics"][0]
+        index = source.index("missing")
+        expected = len(source[:index].encode("utf-16-le")) // 2
+        self.assertEqual(
+            diagnostic["range"]["start"]["character"],
+            expected,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

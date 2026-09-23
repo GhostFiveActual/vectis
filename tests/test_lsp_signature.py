@@ -234,5 +234,22 @@ class LspSignatureHelpTests(unittest.TestCase):
             )
 
 
+    def test_signature_cursor_uses_utf16_character_units(self) -> None:
+        source = 'mission "😀" { let result concat("a", "b"); }'
+        target = source.index('"b"') + 1
+        character = len(source[:target].encode("utf-16-le")) // 2
+        result = signature_help(
+            source,
+            line=0,
+            character=character,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            result["signatures"][0]["label"],
+            "concat(arg1, ...)",
+        )
+        self.assertEqual(result["activeParameter"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

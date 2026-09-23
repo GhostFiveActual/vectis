@@ -400,5 +400,50 @@ class LspWorkspaceTests(
                     )
 
 
+    def test_navigation_ranges_and_cursor_use_utf16(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            entry = Path(directory) / "main.vectis"
+            source = (
+                'mission "😀" { source quality 96; '
+                'let approved quality >= 90; publish approved; }'
+            )
+            entry.write_text(source, encoding="utf-8")
+            workspace = load_workspace_program(entry)
+            reference_index = source.index("quality", source.index("let")) + 2
+            character = len(
+                source[:reference_index].encode("utf-16-le")
+            ) // 2
+
+            definition = symbol_definition(
+                workspace,
+                path=entry,
+                line=0,
+                character=character,
+            )
+            self.assertIsNotNone(definition)
+            declaration_index = source.index("quality")
+            expected_start = len(
+                source[:declaration_index].encode("utf-16-le")
+            ) // 2
+            self.assertEqual(
+                definition["range"]["start"]["character"],
+                expected_start,
+            )
+
+            edit = symbol_rename(
+                workspace,
+                path=entry,
+                line=0,
+                character=character,
+                new_name="score",
+            )
+            self.assertIsNotNone(edit)
+            starts = [
+                item["range"]["start"]["character"]
+                for item in edit["changes"][entry.resolve().as_uri()]
+            ]
+            self.assertIn(expected_start, starts)
+
+
 if __name__ == "__main__":
     unittest.main()
