@@ -51,6 +51,7 @@ class LanguageServerTests(unittest.TestCase):
                 "vectis.history.inspect",
                 "vectis.capabilities.inspect",
                 "vectis.templates.inspect",
+                "vectis.modules.inspect",
             ],
         )
         self.assertIn("completionProvider", capabilities)
@@ -866,6 +867,66 @@ class LanguageServerTests(unittest.TestCase):
             }
         )[0]["result"]
         self.assertFalse(missing["ok"])
+
+    def test_module_browsing_uses_project_overlays(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n[project]\n",
+                encoding="utf-8",
+            )
+            library = root / "lib" / "shared.vectis"
+            library.parent.mkdir(parents=True)
+            library.write_text(
+                "function saved(value) { return value; }\n",
+                encoding="utf-8",
+            )
+            entry = root / "main.vectis"
+            entry.write_text(
+                'import "lib/shared.vectis";\n'
+                'mission "Browse" { publish saved(true); }\n',
+                encoding="utf-8",
+            )
+            entry_uri = entry.resolve().as_uri()
+            library_uri = library.resolve().as_uri()
+            self.server.documents[library_uri] = (
+                "function overlay(value, fallback) { "
+                "return coalesce(value, fallback); }\n"
+            )
+
+            result = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 60,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": "vectis.modules.inspect",
+                        "arguments": [{"uri": entry_uri}],
+                    },
+                }
+            )[0]["result"]
+
+            self.assertTrue(result["ok"])
+            catalog = result["catalog"]
+            self.assertEqual(
+                catalog["schema"],
+                "vectis.module-browser/v1",
+            )
+            by_path = {
+                item["path"]: item
+                for item in catalog["modules"]
+            }
+            self.assertEqual(
+                by_path["lib/shared.vectis"]["functions"][0]["name"],
+                "overlay",
+            )
+            self.assertTrue(
+                by_path["lib/shared.vectis"]["overlay"]
+            )
+            self.assertNotIn(
+                str(root.resolve()),
+                json.dumps(result, sort_keys=True),
+            )
 
     def test_diagnostic_range_uses_utf16_units(self) -> None:
         source = 'mission "😀" { publish missing; }'

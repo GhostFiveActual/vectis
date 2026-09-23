@@ -29,6 +29,7 @@ from vectis.examples import CANONICAL_EXAMPLES, example_manifest
 from vectis.formatter import format_program
 from vectis.history import execution_history
 from vectis.capability_config import capability_configuration
+from vectis.module_browser import browse_project_modules
 from vectis.templates import (
     template_catalog,
     template_preview,
@@ -753,11 +754,19 @@ def command_explain(args: argparse.Namespace) -> int:
 
 
 def command_modules(args: argparse.Namespace) -> int:
-    """Inspect the deterministic source-module graph for one entry file."""
+    """Inspect one import graph or browse the project module catalog."""
     if args.source == "-":
         raise ValueError(
             "vectis modules requires a file path"
         )
+
+    if args.browse:
+        _print_json(
+            browse_project_modules(
+                Path(args.source),
+            )
+        )
+        return 0
 
     loaded = load_program_file(
         Path(args.source),
@@ -1525,9 +1534,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     modules_parser = commands.add_parser(
         "modules",
-        help="inspect deterministic source-module resolution",
+        help="inspect one import graph or browse project modules",
     )
     _add_source_argument(modules_parser)
+    modules_parser.add_argument(
+        "--browse",
+        action="store_true",
+        help="browse every project-bounded VECTIS source module",
+    )
     modules_parser.set_defaults(handler=command_modules)
 
     audit_parser = commands.add_parser(
