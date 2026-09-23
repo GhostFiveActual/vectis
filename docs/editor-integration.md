@@ -40,7 +40,8 @@ The current server supports:
 14. `textDocument/signatureHelp` for built-ins and user-defined pure functions.
 15. `textDocument/semanticTokens/full` for deterministic language roles.
 16. `workspace/executeCommand` with `vectis.graph.inspect` for read-only execution graph inspection.
-17. `textDocument/publishDiagnostics` notifications.
+17. `workspace/executeCommand` with `vectis.history.inspect` for project-bounded execution receipt history.
+18. `textDocument/publishDiagnostics` notifications.
 
 Diagnostics use the stable VECTIS diagnostic code as the LSP code and report parser, lexer, module-resolution, and semantic failures through the same compiler contracts used by command-line validation.
 
@@ -85,6 +86,16 @@ The response includes the canonical graph fingerprint and summary, stage and cap
 Open buffers replace saved source before module resolution. When the selected file participates in an open importing workspace, inspection uses the same widest reachable overlay workspace as source navigation.
 
 Graph node values and runtime state are omitted from the inspection payload. Invalid source returns translated VECTIS diagnostics rather than a partial graph.
+
+## Execution history
+
+`workspace/executeCommand` with `vectis.history.inspect` projects explicitly persisted execution receipts into a deterministic history response. Clients pass one argument object containing a file-backed document `uri`, a relative receipt `directory`, and an optional integer `limit`.
+
+The receipt directory is resolved inside the selected document's VECTIS project root. Absolute directories and paths that escape the project root are rejected. Receipt discovery is non-recursive, and receipt symlinks are rejected.
+
+History returns an allowlisted projection rather than raw receipt JSON. Entries include receipt filename, recorded time, safe source label, plan fingerprint and numeric summary, execution status, dry-run state, node-state counts, failure categories, granted capability names, and a profile fingerprint when present. Runtime values, failure details, local paths, and arbitrary receipt fields are not returned.
+
+The history command performs no execution and creates no receipts. Receipts appear only when an operator explicitly persists them through existing receipt options.
 
 ## Source coordinates
 
