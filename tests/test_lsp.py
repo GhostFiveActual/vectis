@@ -2,6 +2,7 @@
 # Verifies the dependency-free VECTIS Language Server Protocol surface.
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -45,7 +46,10 @@ class LanguageServerTests(unittest.TestCase):
         self.assertIn("executeCommandProvider", capabilities)
         self.assertEqual(
             capabilities["executeCommandProvider"]["commands"],
-            ["vectis.graph.inspect"],
+            [
+                "vectis.graph.inspect",
+                "vectis.history.inspect",
+            ],
         )
         self.assertIn("completionProvider", capabilities)
 
@@ -582,6 +586,137 @@ class LanguageServerTests(unittest.TestCase):
         )[0]
         self.assertEqual(invalid["error"]["code"], -32602)
 
+
+    def test_history_inspection_is_project_bounded_and_value_free(
+        self,
+    ) -> None:
+        sensitive = "LSP-HISTORY-SECRET"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n",
+                encoding="utf-8",
+            )
+            entry = root / "main.vectis"
+            entry.write_text(
+                'mission "History" {}\n',
+                encoding="utf-8",
+            )
+            history = root / "history"
+            history.mkdir()
+            receipt = {
+                "schema": "vectis.execution-receipt/v1",
+                "plan": {
+                    "fingerprint": "b" * 64,
+                    "summary": {
+                        "nodes": 1,
+                        "edges": 0,
+                        "branch_edges": 0,
+                        "stage_count": 0,
+                        "stages": [],
+                        "depth": 0,
+                        "levels": 1,
+                        "max_width": 1,
+                        "max_fan_in": 0,
+                        "max_fan_out": 0,
+                        "sources": ["node"],
+                        "sinks": ["node"],
+                        "node_kinds": {
+                            "source": 1,
+                        },
+                        "fingerprint": "b" * 64,
+                        "topological_order": [
+                            "node",
+                        ],
+                    },
+                    "authority": {},
+                },
+                "execution": {
+                    "status": "success",
+                    "success": True,
+                    "dry_run": False,
+                    "execution_order": [
+                        "node",
+                    ],
+                    "node_states": [
+                        {
+                            "node": "node",
+                            "state": "succeeded",
+                        }
+                    ],
+                    "failures": [],
+                },
+                "provenance": {
+                    "vectis_version": "0.8.0",
+                    "source": "main.vectis",
+                    "granted_capabilities": [],
+                    "registered_actions": [],
+                    "runtime_values_recorded": False,
+                },
+                "evidence": {
+                    "recorded_at": "2026-09-23T12:00:00Z",
+                },
+                "runtime_values": {
+                    "secret": sensitive,
+                },
+            }
+            (history / "run.json").write_text(
+                json.dumps(receipt),
+                encoding="utf-8",
+            )
+            uri = entry.resolve().as_uri()
+
+            result = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 53,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": "vectis.history.inspect",
+                        "arguments": [
+                            {
+                                "uri": uri,
+                                "directory": "history",
+                                "limit": 10,
+                            }
+                        ],
+                    },
+                }
+            )[0]["result"]
+
+            self.assertTrue(result["ok"])
+            rendered = json.dumps(
+                result,
+                sort_keys=True,
+            )
+            self.assertNotIn(
+                sensitive,
+                rendered,
+            )
+            self.assertEqual(
+                result["history"]["entries"][0]["receipt"],
+                "run.json",
+            )
+
+            escaped = self.server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 54,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": "vectis.history.inspect",
+                        "arguments": [
+                            {
+                                "uri": uri,
+                                "directory": "..",
+                            }
+                        ],
+                    },
+                }
+            )[0]["result"]
+            self.assertFalse(
+                escaped["ok"]
+            )
 
     def test_diagnostic_range_uses_utf16_units(self) -> None:
         source = 'mission "😀" { publish missing; }'

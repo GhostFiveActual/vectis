@@ -15,6 +15,7 @@ from vectis.compiler import compile_program
 from vectis.diagnostic import Diagnostic, DiagnosticError
 from vectis.editor import completion_items, document_symbols, hover_info
 from vectis.formatter import format_program
+from vectis.history import execution_history
 from vectis.lsp_workspace import (
     load_workspace_program,
     navigation_workspace,
@@ -31,6 +32,7 @@ from vectis.lsp_semantic import (
 from vectis.lsp_graph import graph_inspection
 from vectis.lsp_position import source_span_to_lsp_range
 from vectis.lsp_signature import signature_help
+from vectis.modules import module_root_for
 from vectis.parser import parse
 
 
@@ -280,6 +282,60 @@ class LanguageServer:
                 ],
             }
 
+    def _history_inspection(
+        self,
+        uri: str,
+        directory: str,
+        limit: int,
+    ) -> dict[str, object]:
+        """Inspect explicit project-local receipts without exposing raw JSON."""
+        path = _uri_path(uri)
+        if path is None:
+            return {
+                "ok": False,
+                "error": (
+                    "history inspection requires a file-backed document"
+                ),
+            }
+
+        relative = Path(directory)
+        if relative.is_absolute():
+            return {
+                "ok": False,
+                "error": "history directory must be relative to the project root",
+            }
+
+        root = module_root_for(path)
+        destination = (root / relative).resolve()
+        try:
+            destination.relative_to(root)
+        except ValueError:
+            return {
+                "ok": False,
+                "error": "history directory must remain inside the project root",
+            }
+
+        try:
+            history = execution_history(
+                destination,
+                limit=limit,
+            )
+        except (
+            OSError,
+            UnicodeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+            }
+
+        return {
+            "ok": True,
+            "history": history,
+        }
+
     def _format(self, uri: str) -> list[dict[str, object]]:
         source = self.documents.get(uri)
         if source is None:
@@ -347,7 +403,10 @@ class LanguageServer:
                                 "full": True,
                             },
                             "executeCommandProvider": {
-                                "commands": ["vectis.graph.inspect"],
+                                "commands": [
+                                    "vectis.graph.inspect",
+                                    "vectis.history.inspect",
+                                ],
                             },
                         },
                         "serverInfo": {
@@ -810,7 +869,10 @@ class LanguageServer:
             command = params.get("command")
             arguments = params.get("arguments")
 
-            if command != "vectis.graph.inspect":
+            if command not in {
+                "vectis.graph.inspect",
+                "vectis.history.inspect",
+            }:
                 return [
                     _error_response(
                         message_id,
@@ -818,6 +880,49 @@ class LanguageServer:
                         message=(
                             "unsupported VECTIS command: "
                             f"{command}"
+                        ),
+                    )
+                ]
+
+            if command == "vectis.history.inspect":
+                if (
+                    not isinstance(arguments, list)
+                    or len(arguments) != 1
+                    or not isinstance(arguments[0], dict)
+                    or not isinstance(arguments[0].get("uri"), str)
+                    or not isinstance(arguments[0].get("directory"), str)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message=(
+                                "vectis.history.inspect requires one argument object "
+                                "with uri and relative directory"
+                            ),
+                        )
+                    ]
+
+                limit = arguments[0].get("limit", 50)
+                if (
+                    isinstance(limit, bool)
+                    or not isinstance(limit, int)
+                ):
+                    return [
+                        _error_response(
+                            message_id,
+                            code=_LSP_ERROR_INVALID_PARAMS,
+                            message="history limit must be an integer",
+                        )
+                    ]
+
+                return [
+                    _response(
+                        message_id,
+                        self._history_inspection(
+                            arguments[0]["uri"],
+                            arguments[0]["directory"],
+                            limit,
                         ),
                     )
                 ]

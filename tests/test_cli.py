@@ -78,6 +78,7 @@ class CliTests(unittest.TestCase):
             "inspect",
             "run",
             "receipt",
+            "history",
             "mission",
             "audit",
             "fingerprint",
@@ -572,6 +573,58 @@ class CliTests(unittest.TestCase):
             text,
         )
 
+
+    def test_history_command_projects_explicit_receipts(self) -> None:
+        sensitive = "CLI-HISTORY-SECRET"
+        source = self.source_file(
+            'mission "History" { '
+            f'source token "{sensitive}"; '
+            'publish token; }'
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt_path = root / "run.json"
+
+            code, _stdout, stderr = self.invoke(
+                [
+                    "receipt",
+                    "--output",
+                    str(receipt_path),
+                    source,
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "history",
+                    str(root),
+                    "--limit",
+                    "10",
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertNotIn(
+                sensitive,
+                stdout,
+            )
+            payload = json.loads(stdout)
+            self.assertEqual(
+                payload["schema"],
+                "vectis.execution-history/v1",
+            )
+            self.assertEqual(
+                payload["returned"],
+                1,
+            )
+            self.assertEqual(
+                payload["entries"][0]["receipt"],
+                "run.json",
+            )
 
     def test_actions_exposes_typed_standard_contracts(self):
         code, stdout, stderr = self.invoke(

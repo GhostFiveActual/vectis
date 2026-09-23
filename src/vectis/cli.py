@@ -27,6 +27,7 @@ from vectis.demo_app import run_demo_app
 from vectis.evaluator import builtin_manifest, evaluate_expression
 from vectis.examples import CANONICAL_EXAMPLES, example_manifest
 from vectis.formatter import format_program
+from vectis.history import execution_history
 from vectis.lexer import Lexer, LexerError
 from vectis.modules import ModuleError, load_program_file
 from vectis.parser import ParserError, parse, parse_expression
@@ -451,6 +452,17 @@ def command_receipt(args: argparse.Namespace) -> int:
         _print_json(receipt)
 
     return 0 if result.success else 1
+
+
+def command_history(args: argparse.Namespace) -> int:
+    """Inspect explicitly persisted value-free execution receipts."""
+    _print_json(
+        execution_history(
+            Path(args.directory),
+            limit=args.limit,
+        )
+    )
+    return 0
 
 
 def _terminal_value(value: object, *, limit: int = 34) -> str:
@@ -1347,6 +1359,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     receipt_parser.set_defaults(
         handler=command_receipt
+    )
+
+    history_parser = commands.add_parser(
+        "history",
+        help="inspect explicit value-free execution receipt history",
+    )
+    history_parser.add_argument(
+        "directory",
+        metavar="DIRECTORY",
+        help="directory containing persisted execution receipt JSON files",
+    )
+    history_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="maximum valid receipts to return; default: 50",
+    )
+    history_parser.set_defaults(
+        handler=command_history
     )
 
     mission_parser = commands.add_parser(
