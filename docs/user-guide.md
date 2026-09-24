@@ -194,6 +194,18 @@ function release_scores(): list[number] {
 }
 ```
 
+Object shape contracts describe required fields while allowing additional fields:
+
+```vectis
+function release_score(
+    value: object{name:string,metrics:object{scores:list[number]}}
+): number {
+    return value.metrics.scores[0];
+}
+```
+
+Object shape field names are identifiers. Every declared field is required when the object is statically visible, nested field contracts are checked recursively, and member access or string-key indexing preserves the known field contract. Plain `object` remains the broad object contract.
+
 Direct and indirect recursion are rejected before graph generation. Function bodies cannot capture mission values or contain capability, publication, analysis, process, filesystem, or network statements.
 
 During compilation, calls expand into ordinary VECTIS expressions. Graph metadata preserves the source expression when expansion occurs, while runtime evaluation uses the expanded deterministic expression.

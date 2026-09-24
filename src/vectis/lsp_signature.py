@@ -258,24 +258,74 @@ def _consume_type_annotation(
 
     name = str(getattr(tokens[cursor], "value", ""))
     cursor += 1
-    if not (
+
+    if (
         cursor < len(tokens)
         and getattr(tokens[cursor], "type", None) == "punctuation"
         and getattr(tokens[cursor], "value", None) == "["
     ):
-        return name, cursor
+        nested = _consume_type_annotation(tokens, cursor + 1)
+        if nested is None:
+            return None
+        item, cursor = nested
+        if not (
+            cursor < len(tokens)
+            and getattr(tokens[cursor], "type", None) == "punctuation"
+            and getattr(tokens[cursor], "value", None) == "]"
+        ):
+            return None
+        return f"{name}[{item}]", cursor + 1
 
-    nested = _consume_type_annotation(tokens, cursor + 1)
-    if nested is None:
-        return None
-    item, cursor = nested
-    if not (
-        cursor < len(tokens)
+    if (
+        name == "object"
+        and cursor + 1 < len(tokens)
         and getattr(tokens[cursor], "type", None) == "punctuation"
-        and getattr(tokens[cursor], "value", None) == "]"
+        and getattr(tokens[cursor], "value", None) == "{"
+        and getattr(tokens[cursor + 1], "type", None) == "identifier"
     ):
+        cursor += 1
+        fields: list[str] = []
+        if (
+            cursor < len(tokens)
+            and getattr(tokens[cursor], "type", None) == "punctuation"
+            and getattr(tokens[cursor], "value", None) == "}"
+        ):
+            return f"{name}{{}}", cursor + 1
+
+        while cursor < len(tokens):
+            if getattr(tokens[cursor], "type", None) != "identifier":
+                return None
+            field_name = str(getattr(tokens[cursor], "value", ""))
+            cursor += 1
+            if not (
+                cursor < len(tokens)
+                and getattr(tokens[cursor], "type", None) == "punctuation"
+                and getattr(tokens[cursor], "value", None) == ":"
+            ):
+                return None
+            nested = _consume_type_annotation(tokens, cursor + 1)
+            if nested is None:
+                return None
+            field_type, cursor = nested
+            fields.append(f"{field_name}:{field_type}")
+
+            if (
+                cursor < len(tokens)
+                and getattr(tokens[cursor], "type", None) == "punctuation"
+                and getattr(tokens[cursor], "value", None) == "}"
+            ):
+                return f"{name}{{{','.join(fields)}}}", cursor + 1
+            if not (
+                cursor < len(tokens)
+                and getattr(tokens[cursor], "type", None) == "punctuation"
+                and getattr(tokens[cursor], "value", None) == ","
+            ):
+                return None
+            cursor += 1
+
         return None
-    return f"{name}[{item}]", cursor + 1
+
+    return name, cursor
 
 
 def _source_signature(

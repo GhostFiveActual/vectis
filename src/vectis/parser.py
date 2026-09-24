@@ -168,13 +168,39 @@ class Parser:
             "identifier",
             description=description,
         ).value
-        if self._match("punctuation", "[") is None:
-            return name
-        item = self._parse_type_annotation(
-            description="list item type",
-        )
-        self._expect("punctuation", "]")
-        return f"{name}[{item}]"
+
+        if self._match("punctuation", "[") is not None:
+            item = self._parse_type_annotation(
+                description="list item type",
+            )
+            self._expect("punctuation", "]")
+            return f"{name}[{item}]"
+
+        if (
+            name == "object"
+            and self._check("punctuation", "{")
+            and self.index + 1 < len(self.tokens)
+            and self.tokens[self.index + 1].type == "identifier"
+        ):
+            self._advance()
+            fields: list[str] = []
+            if not self._check("punctuation", "}"):
+                while True:
+                    field_name = self._expect(
+                        "identifier",
+                        description="object contract field",
+                    ).value
+                    self._expect("punctuation", ":")
+                    field_type = self._parse_type_annotation(
+                        description="object contract field type",
+                    )
+                    fields.append(f"{field_name}:{field_type}")
+                    if self._match("punctuation", ",") is None:
+                        break
+            self._expect("punctuation", "}")
+            return f"{name}{{{','.join(fields)}}}"
+
+        return name
 
     def _parse_function(self) -> FunctionDeclaration:
         start = self._expect("keyword", "function")

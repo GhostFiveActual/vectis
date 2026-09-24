@@ -168,6 +168,21 @@ class LspSemanticTokenTests(
         self.assertIn((0, 28, 6, "keyword", 0), items)
         self.assertIn((0, 38, 6, "keyword", 0), items)
 
+    def test_typed_object_shape_marks_type_names_as_keywords(self) -> None:
+        source = (
+            "function score(value: object{name:string,score:list[number]}): number {\n"
+            "    return value.score[0];\n"
+            "}\n"
+        )
+        items = _decoded(source, semantic_tokens(source))
+
+        keyword_slices = {
+            source.splitlines()[line][start:start + length]
+            for line, start, length, kind, _modifiers in items
+            if kind == "keyword"
+        }
+        self.assertTrue({"object", "string", "list", "number"}.issubset(keyword_slices))
+
     def test_multiline_string_is_split_by_line(
         self,
     ) -> None:

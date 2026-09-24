@@ -66,7 +66,7 @@ Rename returns a normal LSP `WorkspaceEdit` and does not modify source files its
 
 ## Signature help
 
-`textDocument/signatureHelp` reports callable information for deterministic pure functions while a call is being written. Built-in labels and arity come from the canonical evaluator registry. User-defined labels preserve declared parameter names, optional parameter type annotations, and an optional declared return type from VECTIS source. Typed list contracts such as `list[number]` are rendered canonically in signature labels.
+`textDocument/signatureHelp` reports callable information for deterministic pure functions while a call is being written. Built-in labels and arity come from the canonical evaluator registry. User-defined labels preserve declared parameter names, optional parameter type annotations, and an optional declared return type from VECTIS source. Typed list contracts such as `list[number]` and object shape contracts such as `object{name:string,score:number}` are rendered canonically in signature labels.
 
 The signature helper uses the same overlay-aware workspace as navigation when the current source graph is complete. If the current call site is temporarily incomplete, declaration headers can still be recovered from open buffers through the canonical lexer. This keeps an unsaved imported function available at the normal `(` and `,` signature triggers without changing parser or compiler behavior.
 
@@ -76,7 +76,7 @@ Nested calls, strings, line comments, list literals, and object literals are tra
 
 `textDocument/semanticTokens/full` reports deterministic language roles from the canonical VECTIS lexer. The server advertises a stable legend for keywords, strings, numbers, operators, functions, parameters, variables, and properties, with `declaration` as the initial modifier.
 
-Function declarations and call targets are reported as functions. Function parameters preserve parameter identity within the pure-function body. Every identifier that participates in a contextual type contract, including nested list item types, is reported as a keyword. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
+Function declarations and call targets are reported as functions. Function parameters preserve parameter identity within the pure-function body. Every type identifier that participates in a contextual contract, including nested list item types and object field types, is reported as a keyword. Object shape field names remain properties. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
 
 Semantic token positions use UTF-16 code units. Multi-line lexical tokens are split into line-local records before LSP delta encoding. If lexical analysis fails, semantic highlighting returns an empty token stream and does not alter compiler diagnostics or execution behavior.
 
