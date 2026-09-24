@@ -204,6 +204,7 @@ class ImportStatement(Statement):
     """Import pure declarations from another VECTIS source module."""
 
     path: str
+    names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         Node.__post_init__(self)
@@ -211,6 +212,24 @@ class ImportStatement(Statement):
             raise ValueError(
                 "ImportStatement.path must be a non-empty string"
             )
+        if self.names is None:
+            return
+        if not isinstance(self.names, tuple):
+            raise TypeError(
+                "ImportStatement.names must be tuple or None"
+            )
+        if not self.names:
+            raise ValueError(
+                "ImportStatement.names must not be empty"
+            )
+        seen: set[str] = set()
+        for name in self.names:
+            _require_name(name, "ImportStatement selected name")
+            if name in seen:
+                raise ValueError(
+                    "ImportStatement.names must not contain duplicates"
+                )
+            seen.add(name)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

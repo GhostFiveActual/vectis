@@ -104,9 +104,13 @@ def _format_statement(statement: Statement, level: int) -> list[str]:
     indent = "    " * level
 
     if isinstance(statement, ImportStatement):
+        selected = ""
+        if statement.names is not None:
+            selected = " {" + ", ".join(statement.names) + "}"
         return [
             f"{indent}import "
-            f"{json.dumps(statement.path, ensure_ascii=False)};"
+            f"{json.dumps(statement.path, ensure_ascii=False)}"
+            f"{selected};"
         ]
     if isinstance(statement, FunctionDeclaration):
         visibility = (

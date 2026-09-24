@@ -261,5 +261,30 @@ class ModuleBrowserTests(unittest.TestCase):
             )
 
 
+    def test_selective_import_names_are_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n[project]\n",
+                encoding="utf-8",
+            )
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "function ready(value) { return value; }\n"
+                "function score(value) { return value; }\n",
+            )
+            self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis" {ready, score};\n'
+                'mission "Entry" { publish ready(true); }\n',
+            )
+            payload = browse_project_modules(root)
+            by_path = {item["path"]: item for item in payload["modules"]}
+            record = by_path["main.vectis"]["imports"][0]
+            self.assertEqual(record["names"], ["ready", "score"])
+            self.assertEqual(record["status"], "resolved")
+
 if __name__ == "__main__":
     unittest.main()

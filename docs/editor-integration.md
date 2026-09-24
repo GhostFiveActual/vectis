@@ -52,13 +52,13 @@ Diagnostics use the stable VECTIS diagnostic code as the LSP code and report par
 
 Open file-backed documents form an overlay above disk content. Module resolution uses the open editor buffer first and reads the saved file only when no overlay exists for that path.
 
-The overlay resolver preserves the normal project root, relative import, `.vectis` extension, cycle rejection, imported-module purity rules, and module function visibility. Unsaved imported pure functions therefore participate in the same semantic compilation as saved modules, while an unsaved `private function` remains inaccessible outside its source module.
+The overlay resolver preserves the normal project root, relative import, `.vectis` extension, cycle rejection, imported-module purity rules, module function visibility, and selective import contracts. Unsaved imported pure functions therefore participate in the same semantic compilation as saved modules, while an unsaved `private function` remains inaccessible outside its source module and an unsaved selective import validates against the overlay target.
 
 Opening, changing, or saving a file republishes diagnostics for all open documents so an imported buffer change can immediately update an open importing mission.
 
 ## Source navigation
 
-Definition, references, and rename operate on user-defined pure functions across the reachable deterministic import graph and on executable value bindings in the entry source. Executable values include `source`, `let`, `analyze`, and `action` result declarations, including declarations and references nested in stages and conditional branches.
+Definition, references, and rename operate on user-defined pure functions across the reachable deterministic import graph, including function names listed by selective imports, and on executable value bindings in the entry source. Executable values include `source`, `let`, `analyze`, and `action` result declarations, including declarations and references nested in stages and conditional branches.
 
 When navigation starts from an imported module, the server prefers the widest currently open entry workspace containing that file. Imported modules remain pure-function-only, so executable value navigation stays in the entry source. Pure-function parameters are not treated as executable values.
 
@@ -76,7 +76,7 @@ Nested calls, strings, line comments, list literals, and object literals are tra
 
 `textDocument/semanticTokens/full` reports deterministic language roles from the canonical VECTIS lexer. The server advertises a stable legend for keywords, strings, numbers, operators, functions, parameters, variables, and properties, with `declaration` as the initial modifier.
 
-Function declarations and call targets are reported as functions. The contextual `private` modifier on a pure-function declaration is reported as a keyword. Function parameters preserve parameter identity within the pure-function body. Every type identifier that participates in a contextual contract, including nested list item types and object field types, is reported as a keyword. Object shape field names remain properties. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
+Function declarations, call targets, and selective import names are reported as functions. The contextual `private` modifier on a pure-function declaration is reported as a keyword. Function parameters preserve parameter identity within the pure-function body. Every type identifier that participates in a contextual contract, including nested list item types and object field types, is reported as a keyword. Object shape field names remain properties. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
 
 Semantic token positions use UTF-16 code units. Multi-line lexical tokens are split into line-local records before LSP delta encoding. If lexical analysis fails, semantic highlighting returns an empty token stream and does not alter compiler diagnostics or execution behavior.
 
@@ -122,7 +122,7 @@ The editor command is read-only. It does not write project files, download templ
 
 `workspace/executeCommand` with `vectis.modules.inspect` returns a deterministic project module catalog. Clients pass one argument object containing a file-backed document `uri`.
 
-The selected document identifies the nearest VECTIS project root. The response uses project-relative paths and reports each `.vectis` file, declared imports, resolved dependency edges, pure-function signatures, executable statement counts, safe diagnostics, importability, cycles, and rejected symbolic-link paths.
+The selected document identifies the nearest VECTIS project root. The response uses project-relative paths and reports each `.vectis` file, declared imports and their optional selected function names, resolved dependency edges, pure-function signatures, executable statement counts, safe diagnostics, importability, cycles, and rejected symbolic-link paths.
 
 Open file-backed VECTIS documents inside the project replace saved source. Unsaved file-backed `.vectis` documents inside the root are included in the catalog even when they do not exist on disk.
 
