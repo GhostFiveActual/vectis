@@ -282,5 +282,16 @@ class LspSemanticTokenTests(
         )
 
 
+    def test_private_function_modifier_is_contextual_keyword(self) -> None:
+        source = (
+            "private function helper(value: number): number {\n"
+            "    return value;\n"
+            "}\n"
+        )
+        items = _decoded(source, semantic_tokens(source))
+        self.assertIn((0, 0, 7, "keyword", 0), items)
+        self.assertIn((0, 17, 6, "function", 1), items)
+
+
 if __name__ == "__main__":
     unittest.main()

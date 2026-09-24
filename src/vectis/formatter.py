@@ -109,6 +109,11 @@ def _format_statement(statement: Statement, level: int) -> list[str]:
             f"{json.dumps(statement.path, ensure_ascii=False)};"
         ]
     if isinstance(statement, FunctionDeclaration):
+        visibility = (
+            "private "
+            if statement.visibility == "private"
+            else ""
+        )
         annotations = (
             statement.parameter_types
             if statement.parameter_types
@@ -133,7 +138,7 @@ def _format_statement(statement: Statement, level: int) -> list[str]:
         )
         return [
             (
-                f"{indent}function {statement.name}"
+                f"{indent}{visibility}function {statement.name}"
                 f"({parameters}){result} {{"
             ),
             (

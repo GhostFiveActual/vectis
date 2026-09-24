@@ -222,10 +222,15 @@ class FunctionDeclaration(Statement):
     body: Expression
     parameter_types: tuple[str | None, ...] = ()
     return_type: str | None = None
+    visibility: str = "public"
 
     def __post_init__(self) -> None:
         Node.__post_init__(self)
         _require_name(self.name, "FunctionDeclaration.name")
+        if self.visibility not in {"public", "private"}:
+            raise ValueError(
+                "FunctionDeclaration.visibility must be public or private"
+            )
         if not isinstance(self.parameters, tuple):
             raise TypeError(
                 "FunctionDeclaration.parameters must be tuple"

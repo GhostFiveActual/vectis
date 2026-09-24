@@ -74,6 +74,7 @@ class ModuleBrowserTests(unittest.TestCase):
                 library["functions"],
                 [{
                     "name": "clamp_score",
+                    "visibility": "public",
                     "parameters": ["value", "minimum", "maximum"],
                     "parameter_types": [None, None, None],
                     "return_type": None,
@@ -102,6 +103,7 @@ class ModuleBrowserTests(unittest.TestCase):
                 function,
                 {
                     "name": "ready",
+                    "visibility": "public",
                     "parameters": ["value"],
                     "parameter_types": ["number"],
                     "return_type": "boolean",
@@ -235,6 +237,27 @@ class ModuleBrowserTests(unittest.TestCase):
             self.assertEqual(
                 payload["cycles"],
                 [["a.vectis", "b.vectis", "a.vectis"]],
+            )
+
+
+    def test_function_visibility_is_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n[project]\n",
+                encoding="utf-8",
+            )
+            self.write(
+                root,
+                "lib/visibility.vectis",
+                "private function helper(value) { return value; }\n"
+                "function exposed(value) { return helper(value); }\n",
+            )
+            payload = browse_project_modules(root)
+            functions = payload["modules"][0]["functions"]
+            self.assertEqual(
+                [(item["name"], item["visibility"]) for item in functions],
+                [("helper", "private"), ("exposed", "public")],
             )
 
 

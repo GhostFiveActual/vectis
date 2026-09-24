@@ -159,6 +159,14 @@ def _classification(
     if value in {"true", "false"}:
         return ("keyword", 0)
 
+    if (
+        value == "private"
+        and index + 1 < len(tokens)
+        and getattr(tokens[index + 1], "type", None) == "keyword"
+        and getattr(tokens[index + 1], "value", None) == "function"
+    ):
+        return ("keyword", 0)
+
     if index in function_names:
         return (
             "function",
