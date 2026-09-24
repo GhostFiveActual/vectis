@@ -13,7 +13,7 @@ from vectis.modules import (
     load_program_file,
     module_root_for,
 )
-from vectis.parser import parse
+from vectis.parser import ParserError, parse
 from vectis.runtime import Runtime
 
 
@@ -434,6 +434,178 @@ class ModuleFunctionVisibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ModuleError, "private to module"):
                 load_program_file(entry)
 
+
+class SelectiveImportTests(unittest.TestCase):
+    def write(self, root: Path, relative: str, content: str) -> Path:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_selective_import_parses_and_formats(self) -> None:
+        program = parse(
+            'import "lib/gate.vectis" {ready, score};\n'
+        )
+        statement = program.statements[0]
+        self.assertEqual(statement.names, ("ready", "score"))
+        formatted = format_program(program)
+        self.assertEqual(
+            formatted,
+            'import "lib/gate.vectis" {ready, score};\n',
+        )
+        self.assertEqual(format_program(parse(formatted)), formatted)
+
+    def test_bare_import_keeps_all_names(self) -> None:
+        statement = parse('import "lib/gate.vectis";\n').statements[0]
+        self.assertIsNone(statement.names)
+
+    def test_duplicate_selector_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ParserError, "duplicate imported"):
+            parse('import "lib/gate.vectis" {ready, ready};\n')
+
+    def test_selected_public_function_executes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "function ready(value) { return value >= 90; }\n"
+                "function score(value) { return value; }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis" {ready};\n'
+                'mission "ok" { publish ready(96); }\n',
+            )
+            loaded = load_program_file(entry)
+            compiled = compile_program(loaded.program)
+            self.assertTrue(compiled.ok, compiled.diagnostics)
+            result = Runtime(compiled.graph).execute()
+            self.assertTrue(result.success)
+            self.assertIs(result.value_for("publish:0001"), True)
+
+    def test_unselected_public_function_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "function ready(value) { return value; }\n"
+                "function score(value) { return value; }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis" {ready};\n'
+                'mission "bad" { publish score(96); }\n',
+            )
+            with self.assertRaisesRegex(
+                ModuleError,
+                "not selected by imports in module main.vectis",
+            ):
+                load_program_file(entry)
+
+    def test_unknown_selector_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "function ready(value) { return value; }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis" {missing};\n'
+                'mission "bad" { publish true; }\n',
+            )
+            with self.assertRaisesRegex(
+                ModuleError,
+                "not declared by module lib/gate.vectis",
+            ):
+                load_program_file(entry)
+
+    def test_private_selector_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "private function helper(value) { return value; }\n"
+                "function ready(value) { return helper(value); }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis" {helper};\n'
+                'mission "bad" { publish true; }\n',
+            )
+            with self.assertRaisesRegex(
+                ModuleError,
+                "private to module lib/gate.vectis",
+            ):
+                load_program_file(entry)
+
+    def test_selected_function_keeps_internal_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/base.vectis",
+                "function floor_score(value) { return value; }\n",
+            )
+            self.write(
+                root,
+                "lib/gate.vectis",
+                'import "base.vectis";\n'
+                "private function threshold(value) {\n"
+                "    return floor_score(value) >= 90;\n"
+                "}\n"
+                "function ready(value) { return threshold(value); }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis" {ready};\n'
+                'mission "ok" { publish ready(96); }\n',
+            )
+            loaded = load_program_file(entry)
+            compiled = compile_program(loaded.program)
+            self.assertTrue(compiled.ok, compiled.diagnostics)
+            result = Runtime(compiled.graph).execute()
+            self.assertTrue(result.success)
+            self.assertIs(result.value_for("publish:0001"), True)
+
+    def test_bare_import_preserves_transitive_public_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/base.vectis",
+                "function shared(value) { return value; }\n",
+            )
+            self.write(
+                root,
+                "lib/gate.vectis",
+                'import "base.vectis";\n'
+                "function ready(value) { return value; }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis";\n'
+                'mission "compat" { publish shared(96); }\n',
+            )
+            loaded = load_program_file(entry)
+            compiled = compile_program(loaded.program)
+            self.assertTrue(compiled.ok, compiled.diagnostics)
 
 if __name__ == "__main__":
     unittest.main()

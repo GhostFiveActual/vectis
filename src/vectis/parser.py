@@ -166,10 +166,37 @@ class Parser:
             "string",
             description="module path string",
         )
+        names: tuple[str, ...] | None = None
+
+        if self._match("punctuation", "{") is not None:
+            selected: list[str] = []
+            while True:
+                name = self._expect(
+                    "identifier",
+                    description="imported function name",
+                )
+                if name.value in selected:
+                    self._error(
+                        (
+                            "duplicate imported function name: "
+                            f"{name.value}"
+                        ),
+                        token=name,
+                        code=DiagnosticCode.SYN_EXPECTED_TOKEN,
+                    )
+                selected.append(name.value)
+
+                if self._match("punctuation", "}") is not None:
+                    break
+                self._expect("punctuation", ",")
+
+            names = tuple(selected)
+
         end = self._expect("punctuation", ";")
         return ImportStatement(
             span=self._cover(start.span, end.span),
             path=path.value,
+            names=names,
         )
 
     def _parse_type_annotation(self, *, description: str) -> str:

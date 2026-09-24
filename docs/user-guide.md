@@ -278,6 +278,14 @@ function release_ready(value: number): boolean {
 
 Private functions remain callable from the same source module but cannot be called from another module. The `private` modifier is contextual and does not reserve that identifier elsewhere. Function names remain globally unique across the loaded program in this language line.
 
+A source module can restrict one direct import to named public functions:
+
+```vectis
+import "../lib/readiness.vectis" {release_ready, release_score};
+```
+
+A selective import validates every named function against the direct target module. Private or missing names fail during module resolution. When a module uses selective imports, calls outside its local declarations must come from a selected direct import or from a bare import. Bare imports preserve the reachable public behavior used by existing projects. A selected function can still use its own module-local private helpers and imported dependencies.
+
 Use `vectis modules FILE` to inspect the resolved module set for one entry file. Use `vectis modules PATH --browse` to inspect the complete project-bounded source catalog, dependency edges, function signatures, executable-file classification, and safe module diagnostics. Module loading and browsing do not grant runtime filesystem authority.
 
 ## Assertions

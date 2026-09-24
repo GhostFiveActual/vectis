@@ -470,5 +470,83 @@ class LspWorkspaceTests(
                 load_workspace_program(entry, overlays=overlays)
 
 
+    def test_selector_participates_in_function_navigation_and_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "library.vectis"
+            entry = root / "main.vectis"
+            library_source = (
+                "function ready(value) {\n"
+                "    return value >= 90;\n"
+                "}\n"
+            )
+            entry_source = (
+                'import "library.vectis" {ready};\n'
+                'mission "Navigation" {\n'
+                "    publish ready(96);\n"
+                "}\n"
+            )
+            library.write_text(library_source, encoding="utf-8")
+            entry.write_text(entry_source, encoding="utf-8")
+
+            workspace = load_workspace_program(entry)
+            selector_character = entry_source.splitlines()[0].index("ready") + 2
+            definition = function_definition(
+                workspace,
+                path=entry,
+                line=0,
+                character=selector_character,
+            )
+            self.assertIsNotNone(definition)
+            self.assertEqual(definition["uri"], library.resolve().as_uri())
+
+            references = function_references(
+                workspace,
+                path=entry,
+                line=0,
+                character=selector_character,
+                include_declaration=True,
+            )
+            self.assertEqual(len(references), 3)
+
+            edit = function_rename(
+                workspace,
+                path=entry,
+                line=0,
+                character=selector_character,
+                new_name="approved",
+            )
+            self.assertIsNotNone(edit)
+            self.assertEqual(
+                len(edit["changes"][entry.resolve().as_uri()]),
+                2,
+            )
+            self.assertEqual(
+                len(edit["changes"][library.resolve().as_uri()]),
+                1,
+            )
+
+    def test_selective_import_uses_unsaved_overlay_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "library.vectis"
+            entry = root / "main.vectis"
+            library.write_text(
+                "function ready(value) { return value; }\n",
+                encoding="utf-8",
+            )
+            entry.write_text(
+                'import "library.vectis" {ready};\n'
+                'mission "Overlay" { publish ready(96); }\n',
+                encoding="utf-8",
+            )
+            overlays = {
+                library.resolve(): (
+                    "private function ready(value) { return value; }\n"
+                )
+            }
+            with self.assertRaisesRegex(ModuleError, "private to module"):
+                load_workspace_program(entry, overlays=overlays)
+
 if __name__ == "__main__":
     unittest.main()

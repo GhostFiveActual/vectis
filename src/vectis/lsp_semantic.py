@@ -68,6 +68,7 @@ def semantic_tokens(
         type_annotations,
         regions,
     ) = _function_context(tokens)
+    import_selectors = _import_selector_context(tokens)
     lines = source.split("\n")
     encoded: list[int] = []
     previous_line = 0
@@ -82,6 +83,7 @@ def semantic_tokens(
                 parameter_declarations
             ),
             type_annotations=type_annotations,
+            import_selectors=import_selectors,
             regions=regions,
         )
         if classification is None:
@@ -131,6 +133,7 @@ def _classification(
     function_names: frozenset[int],
     parameter_declarations: frozenset[int],
     type_annotations: frozenset[int],
+    import_selectors: frozenset[int],
     regions: tuple[_FunctionRegion, ...],
 ) -> tuple[str, int] | None:
     token = tokens[index]
@@ -166,6 +169,9 @@ def _classification(
         and getattr(tokens[index + 1], "value", None) == "function"
     ):
         return ("keyword", 0)
+
+    if index in import_selectors:
+        return ("function", 0)
 
     if index in function_names:
         return (
@@ -373,6 +379,45 @@ def _consume_type_annotation(
 
     return cursor
 
+
+
+def _import_selector_context(
+    tokens: list[object],
+) -> frozenset[int]:
+    """Return token indexes for selective import function names."""
+    selected: set[int] = set()
+    index = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+        if not (
+            getattr(token, "type", None) == "keyword"
+            and getattr(token, "value", None) == "import"
+            and index + 2 < len(tokens)
+            and getattr(tokens[index + 1], "type", None) == "string"
+            and getattr(tokens[index + 2], "type", None) == "punctuation"
+            and getattr(tokens[index + 2], "value", None) == "{"
+        ):
+            index += 1
+            continue
+
+        cursor = index + 3
+        while cursor < len(tokens):
+            current = tokens[cursor]
+            current_type = getattr(current, "type", None)
+            current_value = getattr(current, "value", None)
+
+            if current_type == "punctuation" and current_value == "}":
+                break
+
+            if current_type == "identifier":
+                selected.add(cursor)
+
+            cursor += 1
+
+        index = cursor + 1
+
+    return frozenset(selected)
 
 def _function_context(
     tokens: list[object],

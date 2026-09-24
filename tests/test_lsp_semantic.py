@@ -293,5 +293,15 @@ class LspSemanticTokenTests(
         self.assertIn((0, 17, 6, "function", 1), items)
 
 
+    def test_selective_import_names_are_functions(self) -> None:
+        source = 'import "lib/gate.vectis" {ready, score};\n'
+        items = _decoded(source, semantic_tokens(source))
+        function_slices = {
+            source.splitlines()[line][start:start + length]
+            for line, start, length, kind, _modifiers in items
+            if kind == "function"
+        }
+        self.assertEqual(function_slices, {"ready", "score"})
+
 if __name__ == "__main__":
     unittest.main()

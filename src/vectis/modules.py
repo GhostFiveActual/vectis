@@ -89,45 +89,150 @@ def validate_module_function_visibility(
     programs: Mapping[Path, Program],
     *,
     root: Path,
+    imports_by_path: Mapping[
+        Path,
+        tuple[tuple[ImportStatement, Path], ...],
+    ] | None = None,
 ) -> None:
-    """Reject cross-module calls to private pure functions."""
+    """Reject private or unselected cross-module function calls."""
+    resolved_imports = imports_by_path or {}
     declarations: dict[
         str,
         list[tuple[Path, FunctionDeclaration]],
+    ] = {}
+    direct: dict[
+        Path,
+        dict[str, FunctionDeclaration],
     ] = {}
     local_names: dict[Path, set[str]] = {}
 
     for module_path, program in programs.items():
         names: set[str] = set()
+        module_declarations: dict[str, FunctionDeclaration] = {}
         for statement in program.statements:
             if not isinstance(statement, FunctionDeclaration):
                 continue
             names.add(statement.name)
+            module_declarations[statement.name] = statement
             declarations.setdefault(statement.name, []).append(
                 (module_path, statement)
             )
         local_names[module_path] = names
+        direct[module_path] = module_declarations
+
+    for _importer, imports in resolved_imports.items():
+        for statement, target_path in imports:
+            if statement.names is None:
+                continue
+            target_label = target_path.relative_to(root).as_posix()
+            target_declarations = direct.get(target_path, {})
+            for name in statement.names:
+                target = target_declarations.get(name)
+                if target is None:
+                    raise ModuleError(
+                        (
+                            f"function {name!r} is not declared by "
+                            f"module {target_label}"
+                        ),
+                        span=statement.span,
+                    )
+                if target.visibility == "private":
+                    raise ModuleError(
+                        (
+                            f"function {name!r} is private to "
+                            f"module {target_label}"
+                        ),
+                        span=statement.span,
+                    )
+
+    public_surface_cache: dict[
+        Path,
+        frozenset[tuple[Path, str]],
+    ] = {}
+
+    def public_surface(
+        module_path: Path,
+    ) -> frozenset[tuple[Path, str]]:
+        cached = public_surface_cache.get(module_path)
+        if cached is not None:
+            return cached
+
+        seen: set[Path] = set()
+        pending = [module_path]
+        result: set[tuple[Path, str]] = set()
+
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+
+            for name, declaration in direct.get(current, {}).items():
+                if declaration.visibility == "public":
+                    result.add((current, name))
+
+            for _statement, target in resolved_imports.get(
+                current,
+                (),
+            ):
+                pending.append(target)
+
+        frozen = frozenset(result)
+        public_surface_cache[module_path] = frozen
+        return frozen
 
     for module_path, program in programs.items():
         local = local_names[module_path]
+        imports = resolved_imports.get(module_path, ())
+        selective_mode = any(
+            statement.names is not None
+            for statement, _target in imports
+        )
+        allowed: set[tuple[Path, str]] = set()
+
+        if selective_mode:
+            for statement, target_path in imports:
+                if statement.names is None:
+                    allowed.update(public_surface(target_path))
+                else:
+                    allowed.update(
+                        (target_path, name)
+                        for name in statement.names
+                    )
+
         for node in _walk_nodes(program):
             if not isinstance(node, CallExpression):
                 continue
             if node.name in local:
                 continue
+
             targets = declarations.get(node.name, ())
             if len(targets) != 1:
                 continue
+
             target_path, target = targets[0]
-            if (
-                target_path != module_path
-                and target.visibility == "private"
-            ):
+            if target_path == module_path:
+                continue
+
+            if target.visibility == "private":
                 owner = target_path.relative_to(root).as_posix()
                 raise ModuleError(
                     (
                         f"function {node.name!r} is private to "
                         f"module {owner}"
+                    ),
+                    span=node.span,
+                )
+
+            if (
+                selective_mode
+                and (target_path, node.name) not in allowed
+            ):
+                importer = module_path.relative_to(root).as_posix()
+                raise ModuleError(
+                    (
+                        f"function {node.name!r} is not selected by "
+                        f"imports in module {importer}"
                     ),
                     span=node.span,
                 )
@@ -155,6 +260,10 @@ def load_program_file(
     visiting: list[Path] = []
     ordered_modules: list[Path] = []
     program_by_path: dict[Path, Program] = {}
+    resolved_imports: dict[
+        Path,
+        tuple[tuple[ImportStatement, Path], ...],
+    ] = {}
     imported_functions: list[FunctionDeclaration] = []
     entry_functions: list[FunctionDeclaration] = []
     entry_executable: list[Statement] = []
@@ -241,12 +350,21 @@ def load_program_file(
             if isinstance(statement, ImportStatement)
         )
 
-        for statement in imports:
-            visit(
+        resolved = tuple(
+            (
+                statement,
                 resolve_import(
                     statement,
                     module_path,
                 ),
+            )
+            for statement in imports
+        )
+        resolved_imports[module_path] = resolved
+
+        for _statement, target in resolved:
+            visit(
+                target,
                 is_entry=False,
             )
 
@@ -304,6 +422,7 @@ def load_program_file(
     validate_module_function_visibility(
         program_by_path,
         root=project_root,
+        imports_by_path=resolved_imports,
     )
 
     merged = Program(

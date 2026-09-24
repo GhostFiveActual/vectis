@@ -142,6 +142,10 @@ def load_workspace_program(
     visiting: list[Path] = []
     ordered_modules: list[Path] = []
     program_by_path: dict[Path, Program] = {}
+    resolved_imports: dict[
+        Path,
+        tuple[tuple[ImportStatement, Path], ...],
+    ] = {}
     source_by_path: dict[Path, str] = {}
     imported_functions: list[FunctionDeclaration] = []
     entry_functions: list[FunctionDeclaration] = []
@@ -259,12 +263,21 @@ def load_workspace_program(
             )
         )
 
-        for statement in imports:
-            visit(
+        resolved = tuple(
+            (
+                statement,
                 resolve_import(
                     statement,
                     module_path,
                 ),
+            )
+            for statement in imports
+        )
+        resolved_imports[module_path] = resolved
+
+        for _statement, target in resolved:
+            visit(
+                target,
                 is_entry=False,
             )
 
@@ -336,6 +349,7 @@ def load_workspace_program(
     validate_module_function_visibility(
         program_by_path,
         root=project_root,
+        imports_by_path=resolved_imports,
     )
 
     merged = Program(
@@ -593,6 +607,25 @@ def function_occurrences(
         ).tokenize()
 
         for node in _walk(program):
+            if isinstance(node, ImportStatement):
+                if node.names is not None:
+                    for name in node.names:
+                        span = _identifier_span(
+                            tokens,
+                            node.span,
+                            name,
+                        )
+                        if span is not None:
+                            result.append(
+                                FunctionOccurrence(
+                                    name=name,
+                                    path=path,
+                                    span=span,
+                                    declaration=False,
+                                )
+                            )
+                continue
+
             if isinstance(
                 node,
                 FunctionDeclaration,

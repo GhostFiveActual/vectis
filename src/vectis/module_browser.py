@@ -270,6 +270,11 @@ def browse_project_modules(
                     {
                         "source": source_label,
                         "target": target,
+                        "names": (
+                            None
+                            if statement.names is None
+                            else list(statement.names)
+                        ),
                         "status": (
                             "resolved"
                             if issue is None
