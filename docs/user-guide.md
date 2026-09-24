@@ -264,6 +264,20 @@ Imports resolve relative to the importing file and remain inside the nearest pro
 
 Imported modules may contain imports and top-level pure function declarations only. Missing files, absolute paths, root escapes, invalid extensions, cycles, and executable imported statements fail before graph generation.
 
+Bare functions are public to the reachable module graph. Internal helpers can be declared with contextual `private function` syntax:
+
+```vectis
+private function threshold(value: number): boolean {
+    return value >= 90;
+}
+
+function release_ready(value: number): boolean {
+    return threshold(value);
+}
+```
+
+Private functions remain callable from the same source module but cannot be called from another module. The `private` modifier is contextual and does not reserve that identifier elsewhere. Function names remain globally unique across the loaded program in this language line.
+
 Use `vectis modules FILE` to inspect the resolved module set for one entry file. Use `vectis modules PATH --browse` to inspect the complete project-bounded source catalog, dependency edges, function signatures, executable-file classification, and safe module diagnostics. Module loading and browsing do not grant runtime filesystem authority.
 
 ## Assertions

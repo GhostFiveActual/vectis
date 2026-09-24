@@ -334,5 +334,106 @@ mission "demo" { publish shared(true); }
                 load_program_file(entry)
 
 
+class ModuleFunctionVisibilityTests(unittest.TestCase):
+    def write(self, root: Path, relative: str, content: str) -> Path:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_private_function_parses_and_formats_contextually(self) -> None:
+        program = parse(
+            "private function helper(value: number): number {\n"
+            "    return value;\n"
+            "}\n"
+        )
+        function = program.statements[0]
+        self.assertEqual(function.visibility, "private")
+        formatted = format_program(program)
+        self.assertIn("private function helper", formatted)
+        self.assertEqual(format_program(parse(formatted)), formatted)
+
+    def test_bare_function_remains_public(self) -> None:
+        program = parse("function helper(value) { return value; }\n")
+        self.assertEqual(program.statements[0].visibility, "public")
+
+    def test_private_identifier_remains_valid_function_name(self) -> None:
+        program = parse("function private(value) { return value; }\n")
+        self.assertEqual(program.statements[0].name, "private")
+        self.assertEqual(program.statements[0].visibility, "public")
+
+    def test_imported_public_function_can_use_private_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "private function threshold(value: number): boolean {\n"
+                "    return value >= 90;\n"
+                "}\n"
+                "function ready(value: number): boolean {\n"
+                "    return threshold(value);\n"
+                "}\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis";\n'
+                'mission "ok" { publish ready(96); }\n',
+            )
+            loaded = load_program_file(entry)
+            compiled = compile_program(loaded.program)
+            self.assertTrue(compiled.ok, compiled.diagnostics)
+            result = Runtime(compiled.graph).execute()
+            self.assertTrue(result.success)
+            self.assertIs(result.value_for("publish:0001"), True)
+
+    def test_entry_cannot_call_imported_private_function(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "private function threshold(value) { return value; }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/gate.vectis";\n'
+                'mission "bad" { publish threshold(true); }\n',
+            )
+            with self.assertRaisesRegex(
+                ModuleError,
+                "private to module lib/gate.vectis",
+            ):
+                load_program_file(entry)
+
+    def test_imported_module_cannot_call_another_modules_private_function(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            self.write(
+                root,
+                "lib/base.vectis",
+                "private function secret(value) { return value; }\n",
+            )
+            self.write(
+                root,
+                "lib/api.vectis",
+                'import "base.vectis";\n'
+                "function exposed(value) { return secret(value); }\n",
+            )
+            entry = self.write(
+                root,
+                "main.vectis",
+                'import "lib/api.vectis";\n'
+                'mission "bad" { publish exposed(true); }\n',
+            )
+            with self.assertRaisesRegex(ModuleError, "private to module"):
+                load_program_file(entry)
+
+
 if __name__ == "__main__":
     unittest.main()

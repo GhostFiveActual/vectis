@@ -52,7 +52,7 @@ Diagnostics use the stable VECTIS diagnostic code as the LSP code and report par
 
 Open file-backed documents form an overlay above disk content. Module resolution uses the open editor buffer first and reads the saved file only when no overlay exists for that path.
 
-The overlay resolver preserves the normal project root, relative import, `.vectis` extension, cycle rejection, and imported-module purity rules. Unsaved imported pure functions therefore participate in the same semantic compilation as saved modules.
+The overlay resolver preserves the normal project root, relative import, `.vectis` extension, cycle rejection, imported-module purity rules, and module function visibility. Unsaved imported pure functions therefore participate in the same semantic compilation as saved modules, while an unsaved `private function` remains inaccessible outside its source module.
 
 Opening, changing, or saving a file republishes diagnostics for all open documents so an imported buffer change can immediately update an open importing mission.
 
@@ -76,7 +76,7 @@ Nested calls, strings, line comments, list literals, and object literals are tra
 
 `textDocument/semanticTokens/full` reports deterministic language roles from the canonical VECTIS lexer. The server advertises a stable legend for keywords, strings, numbers, operators, functions, parameters, variables, and properties, with `declaration` as the initial modifier.
 
-Function declarations and call targets are reported as functions. Function parameters preserve parameter identity within the pure-function body. Every type identifier that participates in a contextual contract, including nested list item types and object field types, is reported as a keyword. Object shape field names remain properties. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
+Function declarations and call targets are reported as functions. The contextual `private` modifier on a pure-function declaration is reported as a keyword. Function parameters preserve parameter identity within the pure-function body. Every type identifier that participates in a contextual contract, including nested list item types and object field types, is reported as a keyword. Object shape field names remain properties. Mission values introduced by `source`, `let`, `analyze`, and `action` are reported as variable declarations. Object identifier keys and member names are reported as properties. Contextual boolean literals are reported as keywords.
 
 Semantic token positions use UTF-16 code units. Multi-line lexical tokens are split into line-local records before LSP delta encoding. If lexical analysis fails, semantic highlighting returns an empty token stream and does not alter compiler diagnostics or execution behavior.
 

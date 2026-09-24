@@ -30,7 +30,11 @@ from vectis.lsp_position import (
     contains_lsp_position,
     source_span_to_lsp_range,
 )
-from vectis.modules import ModuleError, module_root_for
+from vectis.modules import (
+    ModuleError,
+    module_root_for,
+    validate_module_function_visibility,
+)
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
 
@@ -328,6 +332,11 @@ def load_workspace_program(
         raise RuntimeError(
             "workspace loader did not produce an entry program"
         )
+
+    validate_module_function_visibility(
+        program_by_path,
+        root=project_root,
+    )
 
     merged = Program(
         span=entry_program.span,

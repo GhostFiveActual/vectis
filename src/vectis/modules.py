@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
+from typing import Mapping
 
 from vectis.ast import (
+    CallExpression,
     FunctionDeclaration,
     ImportStatement,
+    Node,
     Program,
     Statement,
 )
@@ -70,6 +73,66 @@ def module_root_for(path: Path) -> Path:
     return source.parent if source.suffix else source
 
 
+def _walk_nodes(value: object):
+    if isinstance(value, Node):
+        yield value
+        if is_dataclass(value):
+            for field in fields(value):
+                yield from _walk_nodes(getattr(value, field.name))
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            yield from _walk_nodes(item)
+
+
+def validate_module_function_visibility(
+    programs: Mapping[Path, Program],
+    *,
+    root: Path,
+) -> None:
+    """Reject cross-module calls to private pure functions."""
+    declarations: dict[
+        str,
+        list[tuple[Path, FunctionDeclaration]],
+    ] = {}
+    local_names: dict[Path, set[str]] = {}
+
+    for module_path, program in programs.items():
+        names: set[str] = set()
+        for statement in program.statements:
+            if not isinstance(statement, FunctionDeclaration):
+                continue
+            names.add(statement.name)
+            declarations.setdefault(statement.name, []).append(
+                (module_path, statement)
+            )
+        local_names[module_path] = names
+
+    for module_path, program in programs.items():
+        local = local_names[module_path]
+        for node in _walk_nodes(program):
+            if not isinstance(node, CallExpression):
+                continue
+            if node.name in local:
+                continue
+            targets = declarations.get(node.name, ())
+            if len(targets) != 1:
+                continue
+            target_path, target = targets[0]
+            if (
+                target_path != module_path
+                and target.visibility == "private"
+            ):
+                owner = target_path.relative_to(root).as_posix()
+                raise ModuleError(
+                    (
+                        f"function {node.name!r} is private to "
+                        f"module {owner}"
+                    ),
+                    span=node.span,
+                )
+
+
 def load_program_file(
     path: Path,
     *,
@@ -91,6 +154,7 @@ def load_program_file(
     loaded: set[Path] = set()
     visiting: list[Path] = []
     ordered_modules: list[Path] = []
+    program_by_path: dict[Path, Program] = {}
     imported_functions: list[FunctionDeclaration] = []
     entry_functions: list[FunctionDeclaration] = []
     entry_executable: list[Statement] = []
@@ -164,6 +228,7 @@ def load_program_file(
             source,
             file=str(module_path),
         )
+        program_by_path[module_path] = program
 
         if is_entry:
             entry_program = program
@@ -235,6 +300,11 @@ def load_program_file(
 
     if entry_program is None:
         raise RuntimeError("module loader did not produce an entry program")
+
+    validate_module_function_visibility(
+        program_by_path,
+        root=project_root,
+    )
 
     merged = Program(
         span=entry_program.span,

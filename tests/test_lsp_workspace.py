@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from vectis.compiler import compile_program
+from vectis.modules import ModuleError
 from vectis.lsp_workspace import (
     function_definition,
     function_references,
@@ -443,6 +444,30 @@ class LspWorkspaceTests(
                 for item in edit["changes"][entry.resolve().as_uri()]
             ]
             self.assertIn(expected_start, starts)
+
+
+    def test_private_import_is_rejected_with_unsaved_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text("[project]\n", encoding="utf-8")
+            library = root / "lib.vectis"
+            entry = root / "main.vectis"
+            library.write_text(
+                "function helper(value) { return value; }\n",
+                encoding="utf-8",
+            )
+            entry.write_text(
+                'import "lib.vectis";\n'
+                'mission "bad" { publish helper(true); }\n',
+                encoding="utf-8",
+            )
+            overlays = {
+                library.resolve(): (
+                    "private function helper(value) { return value; }\n"
+                )
+            }
+            with self.assertRaisesRegex(ModuleError, "private to module"):
+                load_workspace_program(entry, overlays=overlays)
 
 
 if __name__ == "__main__":

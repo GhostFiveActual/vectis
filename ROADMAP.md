@@ -18,7 +18,7 @@ Top-level user-defined pure functions provide reusable expression logic with exp
 
 Deterministic file imports allow pure functions to be shared across project files with project-bounded path resolution, transitive dependency loading, duplicate-load suppression, module graph inspection, and cycle rejection.
 
-Deterministic built-in result contracts preserve provable result types through conditional selection, fallback selection, structured constructors, typed collection lookup, and compatible structured alternatives. Further reusable-language work includes explicit namespaces, selective imports, module aliases, and public and private declaration visibility.
+Deterministic built-in result contracts preserve provable result types through conditional selection, fallback selection, structured constructors, typed collection lookup, and compatible structured alternatives. Module function visibility keeps bare functions public while allowing contextual `private function` helpers that are callable only inside their source module. Further reusable-language work includes explicit namespaces, selective imports, and module aliases.
 
 ## Structured data
 

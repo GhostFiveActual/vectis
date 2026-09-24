@@ -108,6 +108,15 @@ class Parser:
                 code=DiagnosticCode.SYN_EXPECTED_STATEMENT,
             )
 
+        if (
+            token.type == "identifier"
+            and token.value == "private"
+            and self.index + 1 < len(self.tokens)
+            and self.tokens[self.index + 1].type == "keyword"
+            and self.tokens[self.index + 1].value == "function"
+        ):
+            return self._parse_private_function()
+
         if token.type != "keyword":
             self._error(
                 f"expected statement keyword, found {token.value!r}",
@@ -202,8 +211,22 @@ class Parser:
 
         return name
 
-    def _parse_function(self) -> FunctionDeclaration:
-        start = self._expect("keyword", "function")
+    def _parse_private_function(self) -> FunctionDeclaration:
+        start = self._expect("identifier", "private")
+        return self._parse_function(
+            visibility="private",
+            start=start,
+        )
+
+    def _parse_function(
+        self,
+        *,
+        visibility: str = "public",
+        start: Token | None = None,
+    ) -> FunctionDeclaration:
+        function_token = self._expect("keyword", "function")
+        if start is None:
+            start = function_token
         name = self._expect(
             "identifier",
             description="function name",
@@ -255,6 +278,7 @@ class Parser:
             body=body,
             parameter_types=parsed_parameter_types,
             return_type=return_type,
+            visibility=visibility,
         )
 
     def _parse_mission(self) -> Mission:
