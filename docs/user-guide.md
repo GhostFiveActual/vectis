@@ -235,6 +235,8 @@ let legacy object("ready", true, "score", 96);
 let ready get(legacy, "ready");
 ```
 
+The compiler preserves deterministic result contracts for polymorphic built-ins when source evidence is sufficient. `if_else` retains the selected contract for a literal condition and otherwise keeps the strongest contract shared by both result branches. `coalesce` retains a result contract only when all visible alternatives are compatible. Literal-key `object(...)` constructors expose structural field contracts, typed-list `get(...)` calls preserve item contracts, and compatible structured alternatives retain guaranteed list item or object field contracts. Incompatible or unavailable alternatives remain unknown rather than being guessed.
+
 Structured values can be returned from pure functions, published, compared for equality, included in reports, and passed through the same deterministic graph/runtime pipeline as scalar values. They do not grant external authority.
 
 ## Modules and imports

@@ -54,6 +54,7 @@ from vectis.evaluator import BUILTINS
 from vectis.source_span import SourceSpan
 from vectis.type_contracts import (
     TypeContract,
+    common_type_contract,
     parse_type_contract,
 )
 
@@ -1304,13 +1305,79 @@ class SemanticAnalyzer:
                     )
                     for item in expression.arguments
                 )
-                if (
-                    items
-                    and items[0] is not None
-                    and all(item == items[0] for item in items)
-                ):
-                    return TypeContract("list", items[0])
+                common = common_type_contract(items)
+                if common is not None:
+                    return TypeContract("list", common)
                 return TypeContract("list", TypeContract("any"))
+            if expression.name == "object":
+                if len(expression.arguments) % 2 != 0:
+                    return TypeContract("object")
+                fields: list[tuple[str, TypeContract]] = []
+                seen: set[str] = set()
+                for index in range(0, len(expression.arguments), 2):
+                    key = expression.arguments[index]
+                    if not isinstance(key, StringLiteral):
+                        return TypeContract("object")
+                    if (
+                        not key.value
+                        or not (key.value[0].isalpha() or key.value[0] == "_")
+                        or not all(
+                            char.isalnum() or char == "_"
+                            for char in key.value[1:]
+                        )
+                    ):
+                        return TypeContract("object")
+                    if key.value in seen:
+                        return TypeContract("object")
+                    seen.add(key.value)
+                    value = self._infer_contract(
+                        expression.arguments[index + 1],
+                        local_types=local_types,
+                        function_stack=function_stack,
+                    )
+                    fields.append(
+                        (
+                            key.value,
+                            value if value is not None else TypeContract("any"),
+                        )
+                    )
+                if fields:
+                    return TypeContract("object", fields=tuple(fields))
+                return TypeContract("object")
+            if expression.name == "if_else" and len(expression.arguments) == 3:
+                condition = expression.arguments[0]
+                if isinstance(condition, BooleanLiteral):
+                    selected = (
+                        expression.arguments[1]
+                        if condition.value
+                        else expression.arguments[2]
+                    )
+                    return self._infer_contract(
+                        selected,
+                        local_types=local_types,
+                        function_stack=function_stack,
+                    )
+                return common_type_contract(
+                    tuple(
+                        self._infer_contract(
+                            item,
+                            local_types=local_types,
+                            function_stack=function_stack,
+                        )
+                        for item in expression.arguments[1:]
+                    )
+                )
+            if expression.name == "coalesce" and expression.arguments:
+                return common_type_contract(
+                    tuple(
+                        self._infer_contract(
+                            item,
+                            local_types=local_types,
+                            function_stack=function_stack,
+                        )
+                        for item in expression.arguments
+                    )
+                )
             if expression.name == "keys":
                 return TypeContract("list", TypeContract("string"))
             if expression.name == "values":
@@ -1332,29 +1399,38 @@ class SemanticAnalyzer:
                         contract
                         for _name, contract in target.fields
                     )
-                    if (
-                        contracts
-                        and all(
-                            contract == contracts[0]
-                            for contract in contracts
-                        )
-                    ):
-                        return TypeContract("list", contracts[0])
+                    common = common_type_contract(contracts)
+                    if common is not None:
+                        return TypeContract("list", common)
                 return TypeContract("list", TypeContract("any"))
-            if (
-                expression.name == "get"
-                and len(expression.arguments) >= 2
-                and isinstance(expression.arguments[1], StringLiteral)
-            ):
+            if expression.name == "get" and len(expression.arguments) >= 2:
                 target = self._infer_contract(
                     expression.arguments[0],
                     local_types=local_types,
                     function_stack=function_stack,
                 )
-                if target is not None and target.name == "object":
+                if (
+                    target is not None
+                    and target.name == "object"
+                    and isinstance(expression.arguments[1], StringLiteral)
+                ):
                     field = target.field(expression.arguments[1].value)
                     if field is not None:
                         return field
+                if (
+                    target is not None
+                    and target.name == "list"
+                    and target.item is not None
+                    and target.item.name != "any"
+                ):
+                    if len(expression.arguments) == 2:
+                        return target.item
+                    default = self._infer_contract(
+                        expression.arguments[2],
+                        local_types=local_types,
+                        function_stack=function_stack,
+                    )
+                    return common_type_contract((target.item, default))
             if expression.name in _BUILTIN_RESULTS:
                 return self._contract_for_value_type(
                     _BUILTIN_RESULTS[expression.name]
@@ -1372,12 +1448,9 @@ class SemanticAnalyzer:
                 )
                 for item in expression.items
             )
-            if (
-                items
-                and items[0] is not None
-                and all(item == items[0] for item in items)
-            ):
-                return TypeContract("list", items[0])
+            common = common_type_contract(items)
+            if common is not None:
+                return TypeContract("list", common)
             return TypeContract("list", TypeContract("any"))
         if isinstance(expression, ObjectLiteral):
             fields: list[tuple[str, TypeContract]] = []

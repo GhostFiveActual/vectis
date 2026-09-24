@@ -34,6 +34,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 18. [RFC 0018: Typed pure-function signatures](0018-typed-pure-function-signatures.md)
 19. [RFC 0019: Typed list element contracts](0019-typed-list-element-contracts.md)
 20. [RFC 0020: Typed object shape contracts](0020-typed-object-shape-contracts.md)
+21. [RFC 0021: Deterministic built-in result contracts](0021-deterministic-builtin-result-contracts.md)
 
 ## When an RFC is required
 
