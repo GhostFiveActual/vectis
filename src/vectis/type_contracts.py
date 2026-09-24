@@ -206,9 +206,76 @@ def parse_type_contract(source: str) -> TypeContract | None:
     return _supported_contract(shape)
 
 
+def common_type_contract(
+    contracts: tuple[TypeContract | None, ...],
+) -> TypeContract | None:
+    """Return the strongest contract guaranteed by every alternative."""
+    if not isinstance(contracts, tuple):
+        raise TypeError("contracts must be tuple")
+    if not contracts or any(contract is None for contract in contracts):
+        return None
+
+    known = tuple(
+        contract
+        for contract in contracts
+        if contract is not None
+    )
+    first = known[0]
+    if all(contract == first for contract in known):
+        return first
+
+    if any(contract.name == "any" for contract in known):
+        return None
+    if any(contract.name != first.name for contract in known[1:]):
+        return None
+
+    if first.name == "list":
+        if any(contract.item is None for contract in known):
+            return TypeContract("list")
+        item = common_type_contract(
+            tuple(contract.item for contract in known)
+        )
+        return TypeContract(
+            "list",
+            item if item is not None else TypeContract("any"),
+        )
+
+    if first.name == "object":
+        if any(not contract.fields for contract in known):
+            return TypeContract("object")
+
+        field_maps = tuple(dict(contract.fields) for contract in known)
+        common_names = set(field_maps[0])
+        for field_map in field_maps[1:]:
+            common_names.intersection_update(field_map)
+
+        fields: list[tuple[str, TypeContract]] = []
+        for field_name, _contract in first.fields:
+            if field_name not in common_names:
+                continue
+            field_contract = common_type_contract(
+                tuple(field_map[field_name] for field_map in field_maps)
+            )
+            fields.append(
+                (
+                    field_name,
+                    field_contract
+                    if field_contract is not None
+                    else TypeContract("any"),
+                )
+            )
+
+        if not fields:
+            return TypeContract("object")
+        return TypeContract("object", fields=tuple(fields))
+
+    return first
+
+
 __all__ = [
     "SUPPORTED_TYPE_NAMES",
     "TypeContract",
+    "common_type_contract",
     "is_type_contract_shape",
     "parse_type_contract",
 ]

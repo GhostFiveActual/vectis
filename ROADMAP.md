@@ -18,13 +18,13 @@ Top-level user-defined pure functions provide reusable expression logic with exp
 
 Deterministic file imports allow pure functions to be shared across project files with project-bounded path resolution, transitive dependency loading, duplicate-load suppression, module graph inspection, and cycle rejection.
 
-Further reusable-language work includes explicit namespaces, selective imports, module aliases, public and private declaration visibility, and richer result type checking.
+Deterministic built-in result contracts preserve provable result types through conditional selection, fallback selection, structured constructors, typed collection lookup, and compatible structured alternatives. Further reusable-language work includes explicit namespaces, selective imports, module aliases, and public and private declaration visibility.
 
 ## Structured data
 
 The value model supports deterministic lists and objects, nested structured values, first-class list and object literal syntax, member access, index access, membership checks, key and value projection, collection sizing, and boolean collection gates.
 
-Typed list element contracts provide deterministic static item checking where element information is known. Typed object shape contracts provide structural required-field checking and preserve known field contracts through deterministic access expressions. Further language work includes deterministic transformation functions, collection pattern validation, and explicitly bounded iteration.
+Typed list element contracts provide deterministic static item checking where element information is known. Typed object shape contracts provide structural required-field checking and preserve known field contracts through deterministic access expressions. Compatible structured alternatives now retain their provable common result contract. Further language work includes deterministic transformation functions, collection pattern validation, and explicitly bounded iteration.
 
 ## Action model
 
