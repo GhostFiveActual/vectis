@@ -19,29 +19,76 @@ SUPPORTED_TYPE_NAMES = frozenset(
 )
 
 
+def _is_identifier(value: str) -> bool:
+    if not value:
+        return False
+    if not (value[0].isalpha() or value[0] == "_"):
+        return False
+    return all(
+        char.isalnum() or char == "_"
+        for char in value[1:]
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class TypeContract:
     """One canonical compile-time type contract."""
 
     name: str
     item: "TypeContract | None" = None
+    fields: tuple[tuple[str, "TypeContract"], ...] = ()
 
     def __post_init__(self) -> None:
         if self.name not in SUPPORTED_TYPE_NAMES:
             raise ValueError(f"unsupported type contract: {self.name}")
+        if self.item is not None and not isinstance(self.item, TypeContract):
+            raise TypeError("TypeContract.item must be TypeContract or None")
         if self.item is not None and self.name != "list":
             raise ValueError("only list contracts may contain an item contract")
+        if self.fields and self.name != "object":
+            raise ValueError("only object contracts may contain field contracts")
+        if self.item is not None and self.fields:
+            raise ValueError("type contract cannot contain list and object members")
+        if not isinstance(self.fields, tuple):
+            raise TypeError("TypeContract.fields must be tuple")
+
+        seen: set[str] = set()
+        for field_name, field_contract in self.fields:
+            if not _is_identifier(field_name):
+                raise ValueError("object contract field must be an identifier")
+            if field_name in seen:
+                raise ValueError(
+                    f"duplicate object contract field: {field_name}"
+                )
+            if not isinstance(field_contract, TypeContract):
+                raise TypeError(
+                    "object contract fields must contain TypeContract values"
+                )
+            seen.add(field_name)
 
     def render(self) -> str:
-        if self.item is None:
-            return self.name
-        return f"{self.name}[{self.item.render()}]"
+        if self.item is not None:
+            return f"{self.name}[{self.item.render()}]"
+        if self.fields:
+            rendered = ",".join(
+                f"{name}:{contract.render()}"
+                for name, contract in self.fields
+            )
+            return f"{self.name}{{{rendered}}}"
+        return self.name
+
+    def field(self, name: str) -> "TypeContract | None":
+        for field_name, contract in self.fields:
+            if field_name == name:
+                return contract
+        return None
 
 
 @dataclass(frozen=True, slots=True)
 class _TypeShape:
     name: str
     item: "_TypeShape | None" = None
+    fields: tuple[tuple[str, "_TypeShape"], ...] | None = None
 
 
 class _ShapeParser:
@@ -59,12 +106,35 @@ class _ShapeParser:
         name = self._identifier()
         if name is None:
             return None
-        item = None
+
         if self._consume("["):
             item = self._parse_shape()
             if item is None or not self._consume("]"):
                 return None
-        return _TypeShape(name=name, item=item)
+            return _TypeShape(name=name, item=item)
+
+        if self._consume("{"):
+            fields: list[tuple[str, _TypeShape]] = []
+            if self._consume("}"):
+                return _TypeShape(name=name, fields=())
+
+            while True:
+                field_name = self._identifier()
+                if field_name is None or not self._consume(":"):
+                    return None
+                field_contract = self._parse_shape()
+                if field_contract is None:
+                    return None
+                fields.append((field_name, field_contract))
+
+                if self._consume("}"):
+                    break
+                if not self._consume(","):
+                    return None
+
+            return _TypeShape(name=name, fields=tuple(fields))
+
+        return _TypeShape(name=name)
 
     def _identifier(self) -> str | None:
         if self.index >= len(self.source):
@@ -98,14 +168,32 @@ def is_type_contract_shape(source: str) -> bool:
 def _supported_contract(shape: _TypeShape) -> TypeContract | None:
     if shape.name not in SUPPORTED_TYPE_NAMES:
         return None
-    if shape.item is not None and shape.name != "list":
-        return None
-    item = None
+
     if shape.item is not None:
+        if shape.name != "list" or shape.fields is not None:
+            return None
         item = _supported_contract(shape.item)
         if item is None:
             return None
-    return TypeContract(name=shape.name, item=item)
+        return TypeContract(name="list", item=item)
+
+    if shape.fields is not None:
+        if shape.name != "object" or not shape.fields:
+            return None
+
+        names = [name for name, _contract in shape.fields]
+        if len(names) != len(set(names)):
+            return None
+
+        fields: list[tuple[str, TypeContract]] = []
+        for field_name, field_shape in shape.fields:
+            field_contract = _supported_contract(field_shape)
+            if field_contract is None:
+                return None
+            fields.append((field_name, field_contract))
+        return TypeContract(name="object", fields=tuple(fields))
+
+    return TypeContract(name=shape.name)
 
 
 def parse_type_contract(source: str) -> TypeContract | None:

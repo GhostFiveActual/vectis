@@ -277,6 +277,27 @@ class LspSignatureHelpTests(unittest.TestCase):
             "first(values: list[number]): number",
         )
 
+    def test_typed_object_shape_contract_is_exposed(self) -> None:
+        source = (
+            "function score(value: object{name:string,score:number}): number {\n"
+            "    return value.score;\n"
+            "}\n"
+            'mission "Signature" { let result score({name: "r", score: 96}); }\n'
+        )
+        character = source.splitlines()[3].index("96") + 1
+        result = signature_help(
+            source,
+            line=3,
+            character=character,
+            supplemental_sources=(source,),
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            result["signatures"][0]["label"],
+            "score(value: object{name:string,score:number}): number",
+        )
+
     def test_signature_cursor_uses_utf16_character_units(self) -> None:
         source = 'mission "😀" { let result concat("a", "b"); }'
         target = source.index('"b"') + 1

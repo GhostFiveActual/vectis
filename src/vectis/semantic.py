@@ -365,11 +365,28 @@ class SemanticAnalyzer:
             return True
         if expected.name != actual.name:
             return False
-        if expected.name != "list" or expected.item is None:
-            return True
-        if actual.item is None or actual.item.name == "any":
-            return True
-        return self._contracts_match(expected.item, actual.item)
+
+        if expected.name == "list":
+            if expected.item is None:
+                return True
+            if actual.item is None or actual.item.name == "any":
+                return True
+            return self._contracts_match(expected.item, actual.item)
+
+        if expected.name == "object" and expected.fields:
+            if not actual.fields:
+                return True
+            actual_fields = dict(actual.fields)
+            for field_name, field_contract in expected.fields:
+                if field_name not in actual_fields:
+                    return False
+                if not self._contracts_match(
+                    field_contract,
+                    actual_fields[field_name],
+                ):
+                    return False
+
+        return True
 
     def _function_parameter_contracts(
         self,
@@ -446,7 +463,7 @@ class SemanticAnalyzer:
 
         return diagnostics
 
-    def _list_literal_contract_diagnostics(
+    def _structured_contract_diagnostics(
         self,
         expression: Expression,
         expected: TypeContract,
@@ -454,51 +471,96 @@ class SemanticAnalyzer:
         local_types: dict[str, TypeContract | None] | None,
         label: str,
     ) -> list[Diagnostic]:
-        if (
-            expected.name != "list"
-            or expected.item is None
-            or expected.item.name == "any"
-        ):
-            return []
+        if expected.name == "list":
+            if expected.item is None or expected.item.name == "any":
+                return []
 
-        if isinstance(expression, ListLiteral):
-            items = expression.items
-        elif (
-            isinstance(expression, CallExpression)
-            and expression.name == "list"
-        ):
-            items = expression.arguments
-        else:
-            return []
+            if isinstance(expression, ListLiteral):
+                items = expression.items
+            elif (
+                isinstance(expression, CallExpression)
+                and expression.name == "list"
+            ):
+                items = expression.arguments
+            else:
+                return []
 
-        diagnostics: list[Diagnostic] = []
-        for index, item in enumerate(items):
-            actual = self._infer_contract(
-                item,
-                local_types=local_types,
-            )
-            if not self._contracts_match(expected.item, actual):
-                diagnostics.append(
-                    self._diagnostic(
-                        DiagnosticCode.SEM_TYPE_MISMATCH,
-                        (
-                            f"{label}[{index}] must be "
-                            f"{expected.item.render()}, not "
-                            f"{actual.render() if actual is not None else 'unknown'}"
-                        ),
-                        item.span,
+            diagnostics: list[Diagnostic] = []
+            for index, item in enumerate(items):
+                actual = self._infer_contract(
+                    item,
+                    local_types=local_types,
+                )
+                if not self._contracts_match(expected.item, actual):
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_TYPE_MISMATCH,
+                            (
+                                f"{label}[{index}] must be "
+                                f"{expected.item.render()}, not "
+                                f"{actual.render() if actual is not None else 'unknown'}"
+                            ),
+                            item.span,
+                        )
+                    )
+                    continue
+                diagnostics.extend(
+                    self._structured_contract_diagnostics(
+                        item,
+                        expected.item,
+                        local_types=local_types,
+                        label=f"{label}[{index}]",
                     )
                 )
-                continue
-            diagnostics.extend(
-                self._list_literal_contract_diagnostics(
+            return diagnostics
+
+        if expected.name == "object" and expected.fields:
+            if not isinstance(expression, ObjectLiteral):
+                return []
+
+            entries = dict(expression.entries)
+            diagnostics: list[Diagnostic] = []
+            for field_name, field_contract in expected.fields:
+                item = entries.get(field_name)
+                if item is None:
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_TYPE_MISMATCH,
+                            f"{label} requires field {field_name!r}",
+                            expression.span,
+                        )
+                    )
+                    continue
+
+                actual = self._infer_contract(
                     item,
-                    expected.item,
                     local_types=local_types,
-                    label=f"{label}[{index}]",
                 )
-            )
-        return diagnostics
+                field_label = f"{label}.{field_name}"
+                if not self._contracts_match(field_contract, actual):
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_TYPE_MISMATCH,
+                            (
+                                f"{field_label} must be "
+                                f"{field_contract.render()}, not "
+                                f"{actual.render() if actual is not None else 'unknown'}"
+                            ),
+                            item.span,
+                        )
+                    )
+                    continue
+                diagnostics.extend(
+                    self._structured_contract_diagnostics(
+                        item,
+                        field_contract,
+                        local_types=local_types,
+                        label=field_label,
+                    )
+                )
+            return diagnostics
+
+        return []
 
     def _analyze_function(
         self,
@@ -529,7 +591,15 @@ class SemanticAnalyzer:
                     local_types=local_types,
                     function_stack=(statement.name,),
                 )
-                if not self._contracts_match(expected, actual):
+                structured = self._structured_contract_diagnostics(
+                    statement.body,
+                    expected,
+                    local_types=local_types,
+                    label=f"Function {statement.name}() return value",
+                )
+                if structured:
+                    diagnostics.extend(structured)
+                elif not self._contracts_match(expected, actual):
                     diagnostics.append(
                         self._diagnostic(
                             DiagnosticCode.SEM_TYPE_MISMATCH,
@@ -540,17 +610,6 @@ class SemanticAnalyzer:
                                 f"{actual.render() if actual is not None else 'unknown'}"
                             ),
                             statement.body.span,
-                        )
-                    )
-                else:
-                    diagnostics.extend(
-                        self._list_literal_contract_diagnostics(
-                            statement.body,
-                            expected,
-                            local_types=local_types,
-                            label=(
-                                f"Function {statement.name}() return value"
-                            ),
                         )
                     )
 
@@ -860,7 +919,15 @@ class SemanticAnalyzer:
                     label = (
                         f"Argument {position} to {expression.name}()"
                     )
-                    if not self._contracts_match(expected, actual):
+                    structured = self._structured_contract_diagnostics(
+                        argument,
+                        expected,
+                        local_types=local_types,
+                        label=label,
+                    )
+                    if structured:
+                        diagnostics.extend(structured)
+                    elif not self._contracts_match(expected, actual):
                         diagnostics.append(
                             self._diagnostic(
                                 DiagnosticCode.SEM_TYPE_MISMATCH,
@@ -872,15 +939,6 @@ class SemanticAnalyzer:
                                 argument.span,
                             )
                         )
-                    else:
-                        diagnostics.extend(
-                            self._list_literal_contract_diagnostics(
-                                argument,
-                                expected,
-                                local_types=local_types,
-                                label=label,
-                            )
-                        )
             else:
                 diagnostics.append(
                     self._diagnostic(
@@ -889,6 +947,32 @@ class SemanticAnalyzer:
                         expression.span,
                     )
                 )
+
+            if (
+                expression.name == "get"
+                and len(expression.arguments) >= 2
+                and isinstance(expression.arguments[1], StringLiteral)
+            ):
+                target = self._infer_contract(
+                    expression.arguments[0],
+                    local_types=local_types,
+                )
+                if (
+                    target is not None
+                    and target.name == "object"
+                    and target.fields
+                    and target.field(expression.arguments[1].value) is None
+                ):
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_TYPE_MISMATCH,
+                            (
+                                "Object contract has no field "
+                                f"{expression.arguments[1].value!r}"
+                            ),
+                            expression.span,
+                        )
+                    )
 
             for argument in expression.arguments:
                 diagnostics.extend(
@@ -949,14 +1033,35 @@ class SemanticAnalyzer:
             return diagnostics
 
         if isinstance(expression, MemberAccess):
-            return self._analyze_expression(
+            diagnostics = self._analyze_expression(
                 expression.target,
                 local_names=local_names,
                 local_types=local_types,
             )
+            target = self._infer_contract(
+                expression.target,
+                local_types=local_types,
+            )
+            if (
+                target is not None
+                and target.name == "object"
+                and target.fields
+                and target.field(expression.member) is None
+            ):
+                diagnostics.append(
+                    self._diagnostic(
+                        DiagnosticCode.SEM_TYPE_MISMATCH,
+                        (
+                            "Object contract has no field "
+                            f"{expression.member!r}"
+                        ),
+                        expression.span,
+                    )
+                )
+            return diagnostics
 
         if isinstance(expression, IndexAccess):
-            return [
+            diagnostics = [
                 *self._analyze_expression(
                     expression.target,
                     local_names=local_names,
@@ -968,6 +1073,28 @@ class SemanticAnalyzer:
                     local_types=local_types,
                 ),
             ]
+            target = self._infer_contract(
+                expression.target,
+                local_types=local_types,
+            )
+            if (
+                target is not None
+                and target.name == "object"
+                and target.fields
+                and isinstance(expression.index, StringLiteral)
+                and target.field(expression.index.value) is None
+            ):
+                diagnostics.append(
+                    self._diagnostic(
+                        DiagnosticCode.SEM_TYPE_MISMATCH,
+                        (
+                            "Object contract has no field "
+                            f"{expression.index.value!r}"
+                        ),
+                        expression.span,
+                    )
+                )
+            return diagnostics
 
         if isinstance(expression, UnaryExpression):
             return self._analyze_expression(
@@ -1187,7 +1314,47 @@ class SemanticAnalyzer:
             if expression.name == "keys":
                 return TypeContract("list", TypeContract("string"))
             if expression.name == "values":
+                target = (
+                    self._infer_contract(
+                        expression.arguments[0],
+                        local_types=local_types,
+                        function_stack=function_stack,
+                    )
+                    if expression.arguments
+                    else None
+                )
+                if (
+                    target is not None
+                    and target.name == "object"
+                    and target.fields
+                ):
+                    contracts = tuple(
+                        contract
+                        for _name, contract in target.fields
+                    )
+                    if (
+                        contracts
+                        and all(
+                            contract == contracts[0]
+                            for contract in contracts
+                        )
+                    ):
+                        return TypeContract("list", contracts[0])
                 return TypeContract("list", TypeContract("any"))
+            if (
+                expression.name == "get"
+                and len(expression.arguments) >= 2
+                and isinstance(expression.arguments[1], StringLiteral)
+            ):
+                target = self._infer_contract(
+                    expression.arguments[0],
+                    local_types=local_types,
+                    function_stack=function_stack,
+                )
+                if target is not None and target.name == "object":
+                    field = target.field(expression.arguments[1].value)
+                    if field is not None:
+                        return field
             if expression.name in _BUILTIN_RESULTS:
                 return self._contract_for_value_type(
                     _BUILTIN_RESULTS[expression.name]
@@ -1213,8 +1380,34 @@ class SemanticAnalyzer:
                 return TypeContract("list", items[0])
             return TypeContract("list", TypeContract("any"))
         if isinstance(expression, ObjectLiteral):
-            return TypeContract("object")
+            fields: list[tuple[str, TypeContract]] = []
+            seen: set[str] = set()
+            for field_name, item in expression.entries:
+                if field_name in seen:
+                    return TypeContract("object")
+                seen.add(field_name)
+                contract = self._infer_contract(
+                    item,
+                    local_types=local_types,
+                    function_stack=function_stack,
+                )
+                fields.append(
+                    (
+                        field_name,
+                        contract if contract is not None else TypeContract("any"),
+                    )
+                )
+            if not fields:
+                return TypeContract("object")
+            return TypeContract("object", fields=tuple(fields))
         if isinstance(expression, MemberAccess):
+            target = self._infer_contract(
+                expression.target,
+                local_types=local_types,
+                function_stack=function_stack,
+            )
+            if target is not None and target.name == "object":
+                return target.field(expression.member)
             return None
         if isinstance(expression, IndexAccess):
             target = self._infer_contract(
@@ -1229,6 +1422,12 @@ class SemanticAnalyzer:
                 and target.item.name != "any"
             ):
                 return target.item
+            if (
+                target is not None
+                and target.name == "object"
+                and isinstance(expression.index, StringLiteral)
+            ):
+                return target.field(expression.index.value)
             return None
         if isinstance(expression, UnaryExpression):
             if expression.operator == "!":

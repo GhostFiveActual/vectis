@@ -291,29 +291,79 @@ def _consume_type_annotation(
     ):
         return None
 
+    name = str(getattr(tokens[cursor], "value", ""))
     type_annotations.add(cursor)
     cursor += 1
-    if not (
+
+    if (
         cursor < len(tokens)
         and getattr(tokens[cursor], "type", None) == "punctuation"
         and getattr(tokens[cursor], "value", None) == "["
     ):
-        return cursor
+        cursor = _consume_type_annotation(
+            tokens,
+            cursor + 1,
+            type_annotations,
+        )
+        if cursor is None:
+            return None
+        if not (
+            cursor < len(tokens)
+            and getattr(tokens[cursor], "type", None) == "punctuation"
+            and getattr(tokens[cursor], "value", None) == "]"
+        ):
+            return None
+        return cursor + 1
 
-    cursor = _consume_type_annotation(
-        tokens,
-        cursor + 1,
-        type_annotations,
-    )
-    if cursor is None:
-        return None
-    if not (
-        cursor < len(tokens)
+    if (
+        name == "object"
+        and cursor + 1 < len(tokens)
         and getattr(tokens[cursor], "type", None) == "punctuation"
-        and getattr(tokens[cursor], "value", None) == "]"
+        and getattr(tokens[cursor], "value", None) == "{"
+        and getattr(tokens[cursor + 1], "type", None) == "identifier"
     ):
+        cursor += 1
+        if (
+            cursor < len(tokens)
+            and getattr(tokens[cursor], "type", None) == "punctuation"
+            and getattr(tokens[cursor], "value", None) == "}"
+        ):
+            return cursor + 1
+
+        while cursor < len(tokens):
+            if getattr(tokens[cursor], "type", None) != "identifier":
+                return None
+            cursor += 1
+            if not (
+                cursor < len(tokens)
+                and getattr(tokens[cursor], "type", None) == "punctuation"
+                and getattr(tokens[cursor], "value", None) == ":"
+            ):
+                return None
+            cursor = _consume_type_annotation(
+                tokens,
+                cursor + 1,
+                type_annotations,
+            )
+            if cursor is None:
+                return None
+            if (
+                cursor < len(tokens)
+                and getattr(tokens[cursor], "type", None) == "punctuation"
+                and getattr(tokens[cursor], "value", None) == "}"
+            ):
+                return cursor + 1
+            if not (
+                cursor < len(tokens)
+                and getattr(tokens[cursor], "type", None) == "punctuation"
+                and getattr(tokens[cursor], "value", None) == ","
+            ):
+                return None
+            cursor += 1
+
         return None
-    return cursor + 1
+
+    return cursor
 
 
 def _function_context(
