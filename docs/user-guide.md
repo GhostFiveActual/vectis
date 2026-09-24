@@ -182,7 +182,17 @@ function label(value: any): string {
 }
 ```
 
-Supported annotations are `string`, `number`, `boolean`, `list`, `object`, and `any`. Parameters may be annotated individually, the result annotation is optional, and existing untyped declarations remain valid. Known call-site argument types are checked against annotated parameters. A declared result type is checked against the statically inferred function body when that body type is known. `any` preserves the existing unknown-type behavior without weakening runtime authority boundaries.
+Supported base annotations are `string`, `number`, `boolean`, `list`, `object`, and `any`. A list annotation may include a recursively nested item contract such as `list[number]`, `list[string]`, or `list[list[boolean]]`. Plain `list` remains the broad list contract, while `list[any]` explicitly accepts any item type. Parameters may be annotated individually, the result annotation is optional, and existing untyped declarations remain valid. Known call-site argument types are checked against annotated parameters. Declared list item contracts validate statically visible list elements and propagate through typed list parameters, list literals, declarations, pure-function results, and list indexing. A declared result type is checked against the statically inferred function body when that body type is known. `any` preserves the existing unknown-type behavior without weakening runtime authority boundaries.
+
+```vectis
+function first_score(scores: list[number]): number {
+    return scores[0];
+}
+
+function release_scores(): list[number] {
+    return [96, 92, 98];
+}
+```
 
 Direct and indirect recursion are rejected before graph generation. Function bodies cannot capture mission values or contain capability, publication, analysis, process, filesystem, or network statements.
 

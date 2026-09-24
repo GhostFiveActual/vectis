@@ -14,17 +14,17 @@ VECTIS is designed around deterministic planning, inspectable execution, and exp
 
 ## Reusable language units
 
-Top-level user-defined pure functions provide reusable expression logic with explicit parameters, acyclic call graphs, static result inference where possible, and compile-time expansion into ordinary execution plans. Optional contextual type annotations on parameters and return values make function contracts explicit while preserving untyped compatibility. Declared types participate in call-site validation, function-body result checking, signature help, semantic tokens, and module browsing without changing runtime expansion.
+Top-level user-defined pure functions provide reusable expression logic with explicit parameters, acyclic call graphs, static result inference where possible, and compile-time expansion into ordinary execution plans. Optional contextual type annotations on parameters and return values make function contracts explicit while preserving untyped compatibility. Typed list element contracts use forms such as `list[number]` to preserve known item types through list literals, declarations, pure-function calls, and list indexing. Declared contracts participate in call-site validation, function-body result checking, signature help, semantic tokens, and module browsing without changing runtime expansion.
 
 Deterministic file imports allow pure functions to be shared across project files with project-bounded path resolution, transitive dependency loading, duplicate-load suppression, module graph inspection, and cycle rejection.
 
-Further reusable-language work includes explicit namespaces, selective imports, module aliases, public and private declaration visibility, stronger collection element typing, and richer result type checking.
+Further reusable-language work includes explicit namespaces, selective imports, module aliases, public and private declaration visibility, object shape contracts, and richer result type checking.
 
 ## Structured data
 
 The value model supports deterministic lists and objects, nested structured values, first-class list and object literal syntax, member access, index access, membership checks, key and value projection, collection sizing, and boolean collection gates.
 
-Further language work includes stronger static element typing, deterministic transformation functions, collection pattern validation, and explicitly bounded iteration.
+Typed list element contracts provide deterministic static item checking where element information is known. Further language work includes object shape contracts, deterministic transformation functions, collection pattern validation, and explicitly bounded iteration.
 
 ## Action model
 

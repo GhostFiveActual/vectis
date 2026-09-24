@@ -246,6 +246,38 @@ def _workspace_signature(
     )
 
 
+def _consume_type_annotation(
+    tokens: list[object],
+    cursor: int,
+) -> tuple[str, int] | None:
+    if (
+        cursor >= len(tokens)
+        or getattr(tokens[cursor], "type", None) != "identifier"
+    ):
+        return None
+
+    name = str(getattr(tokens[cursor], "value", ""))
+    cursor += 1
+    if not (
+        cursor < len(tokens)
+        and getattr(tokens[cursor], "type", None) == "punctuation"
+        and getattr(tokens[cursor], "value", None) == "["
+    ):
+        return name, cursor
+
+    nested = _consume_type_annotation(tokens, cursor + 1)
+    if nested is None:
+        return None
+    item, cursor = nested
+    if not (
+        cursor < len(tokens)
+        and getattr(tokens[cursor], "type", None) == "punctuation"
+        and getattr(tokens[cursor], "value", None) == "]"
+    ):
+        return None
+    return f"{name}[{item}]", cursor + 1
+
+
 def _source_signature(
     source: str,
     name: str,
@@ -302,15 +334,11 @@ def _source_signature(
                 and tokens[cursor].type == "punctuation"
                 and tokens[cursor].value == ":"
             ):
-                cursor += 1
-                if (
-                    cursor >= len(tokens)
-                    or tokens[cursor].type != "identifier"
-                ):
+                parsed = _consume_type_annotation(tokens, cursor + 1)
+                if parsed is None:
                     valid = False
                     break
-                annotation = tokens[cursor].value
-                cursor += 1
+                annotation, cursor = parsed
 
             parameter_types.append(annotation)
 
@@ -340,13 +368,10 @@ def _source_signature(
             and tokens[cursor].type == "punctuation"
             and tokens[cursor].value == ":"
         ):
-            cursor += 1
-            if (
-                cursor >= len(tokens)
-                or tokens[cursor].type != "identifier"
-            ):
+            parsed = _consume_type_annotation(tokens, cursor + 1)
+            if parsed is None:
                 continue
-            return_type = tokens[cursor].value
+            return_type, cursor = parsed
 
         return (
             tuple(parameters),

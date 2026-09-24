@@ -52,6 +52,10 @@ from vectis.diagnostic import (
 )
 from vectis.evaluator import BUILTINS
 from vectis.source_span import SourceSpan
+from vectis.type_contracts import (
+    TypeContract,
+    parse_type_contract,
+)
 
 
 class SemanticError(DiagnosticError):
@@ -149,6 +153,7 @@ class SemanticAnalyzer:
             raise TypeError("program must be Program")
         self.program = program
         self.declarations: dict[str, ValueType] = {}
+        self.declaration_contracts: dict[str, TypeContract | None] = {}
         self.functions: dict[str, FunctionDeclaration] = {}
 
     def analyze(self) -> list[Diagnostic]:
@@ -156,6 +161,7 @@ class SemanticAnalyzer:
 
     def result(self) -> SemanticResult:
         self.declarations = {}
+        self.declaration_contracts = {}
         self.functions = {}
         diagnostics = self._collect_functions()
         diagnostics.extend(
@@ -329,10 +335,46 @@ class SemanticAnalyzer:
 
         return diagnostics
 
-    def _function_parameter_types(
+    def _value_type_for_contract(
+        self,
+        contract: TypeContract | None,
+    ) -> ValueType:
+        if contract is None or contract.name == "any":
+            return ValueType.UNKNOWN
+        return _FUNCTION_TYPE_NAMES.get(
+            contract.name,
+            ValueType.UNKNOWN,
+        )
+
+    def _contract_for_value_type(
+        self,
+        value_type: ValueType,
+    ) -> TypeContract | None:
+        if value_type is ValueType.UNKNOWN:
+            return None
+        return parse_type_contract(value_type.value)
+
+    def _contracts_match(
+        self,
+        expected: TypeContract | None,
+        actual: TypeContract | None,
+    ) -> bool:
+        if expected is None or expected.name == "any":
+            return True
+        if actual is None or actual.name == "any":
+            return True
+        if expected.name != actual.name:
+            return False
+        if expected.name != "list" or expected.item is None:
+            return True
+        if actual.item is None or actual.item.name == "any":
+            return True
+        return self._contracts_match(expected.item, actual.item)
+
+    def _function_parameter_contracts(
         self,
         statement: FunctionDeclaration,
-    ) -> tuple[ValueType, ...]:
+    ) -> tuple[TypeContract | None, ...]:
         annotations = (
             statement.parameter_types
             if statement.parameter_types
@@ -340,14 +382,20 @@ class SemanticAnalyzer:
         )
         return tuple(
             (
-                ValueType.UNKNOWN
+                None
                 if annotation is None
-                else _FUNCTION_TYPE_NAMES.get(
-                    annotation,
-                    ValueType.UNKNOWN,
-                )
+                else parse_type_contract(annotation)
             )
             for annotation in annotations
+        )
+
+    def _function_parameter_types(
+        self,
+        statement: FunctionDeclaration,
+    ) -> tuple[ValueType, ...]:
+        return tuple(
+            self._value_type_for_contract(contract)
+            for contract in self._function_parameter_contracts(statement)
         )
 
     def _function_annotation_diagnostics(
@@ -368,7 +416,7 @@ class SemanticAnalyzer:
         ):
             if (
                 annotation is not None
-                and annotation not in _FUNCTION_TYPE_NAMES
+                and parse_type_contract(annotation) is None
             ):
                 diagnostics.append(
                     self._diagnostic(
@@ -383,7 +431,7 @@ class SemanticAnalyzer:
 
         if (
             statement.return_type is not None
-            and statement.return_type not in _FUNCTION_TYPE_NAMES
+            and parse_type_contract(statement.return_type) is None
         ):
             diagnostics.append(
                 self._diagnostic(
@@ -398,16 +446,70 @@ class SemanticAnalyzer:
 
         return diagnostics
 
+    def _list_literal_contract_diagnostics(
+        self,
+        expression: Expression,
+        expected: TypeContract,
+        *,
+        local_types: dict[str, TypeContract | None] | None,
+        label: str,
+    ) -> list[Diagnostic]:
+        if (
+            expected.name != "list"
+            or expected.item is None
+            or expected.item.name == "any"
+        ):
+            return []
+
+        if isinstance(expression, ListLiteral):
+            items = expression.items
+        elif (
+            isinstance(expression, CallExpression)
+            and expression.name == "list"
+        ):
+            items = expression.arguments
+        else:
+            return []
+
+        diagnostics: list[Diagnostic] = []
+        for index, item in enumerate(items):
+            actual = self._infer_contract(
+                item,
+                local_types=local_types,
+            )
+            if not self._contracts_match(expected.item, actual):
+                diagnostics.append(
+                    self._diagnostic(
+                        DiagnosticCode.SEM_TYPE_MISMATCH,
+                        (
+                            f"{label}[{index}] must be "
+                            f"{expected.item.render()}, not "
+                            f"{actual.render() if actual is not None else 'unknown'}"
+                        ),
+                        item.span,
+                    )
+                )
+                continue
+            diagnostics.extend(
+                self._list_literal_contract_diagnostics(
+                    item,
+                    expected.item,
+                    local_types=local_types,
+                    label=f"{label}[{index}]",
+                )
+            )
+        return diagnostics
+
     def _analyze_function(
         self,
         statement: FunctionDeclaration,
     ) -> list[Diagnostic]:
         diagnostics = self._function_annotation_diagnostics(statement)
-        parameter_types = self._function_parameter_types(statement)
+        parameter_contracts = self._function_parameter_contracts(statement)
         local_types = dict(
             zip(
                 statement.parameters,
-                parameter_types,
+                parameter_contracts,
                 strict=True,
             )
         )
@@ -419,32 +521,38 @@ class SemanticAnalyzer:
             )
         )
 
-        if (
-            statement.return_type is not None
-            and statement.return_type in _FUNCTION_TYPE_NAMES
-        ):
-            expected = _FUNCTION_TYPE_NAMES[statement.return_type]
-            actual = self._infer_type(
-                statement.body,
-                local_types=local_types,
-                function_stack=(statement.name,),
-            )
-            if (
-                expected is not ValueType.UNKNOWN
-                and actual is not ValueType.UNKNOWN
-                and actual is not expected
-            ):
-                diagnostics.append(
-                    self._diagnostic(
-                        DiagnosticCode.SEM_TYPE_MISMATCH,
-                        (
-                            f"Function {statement.name}() declares "
-                            f"return type {expected.value} "
-                            f"but body evaluates to {actual.value}"
-                        ),
-                        statement.body.span,
-                    )
+        if statement.return_type is not None:
+            expected = parse_type_contract(statement.return_type)
+            if expected is not None:
+                actual = self._infer_contract(
+                    statement.body,
+                    local_types=local_types,
+                    function_stack=(statement.name,),
                 )
+                if not self._contracts_match(expected, actual):
+                    diagnostics.append(
+                        self._diagnostic(
+                            DiagnosticCode.SEM_TYPE_MISMATCH,
+                            (
+                                f"Function {statement.name}() declares "
+                                f"return type {expected.render()} "
+                                "but body evaluates to "
+                                f"{actual.render() if actual is not None else 'unknown'}"
+                            ),
+                            statement.body.span,
+                        )
+                    )
+                else:
+                    diagnostics.extend(
+                        self._list_literal_contract_diagnostics(
+                            statement.body,
+                            expected,
+                            local_types=local_types,
+                            label=(
+                                f"Function {statement.name}() return value"
+                            ),
+                        )
+                    )
 
         return diagnostics
 
@@ -453,6 +561,8 @@ class SemanticAnalyzer:
         name: str,
         value_type: ValueType,
         span: SourceSpan,
+        *,
+        contract: TypeContract | None = None,
     ) -> list[Diagnostic]:
         if name in self.declarations:
             return [
@@ -463,6 +573,11 @@ class SemanticAnalyzer:
                 )
             ]
         self.declarations[name] = value_type
+        self.declaration_contracts[name] = (
+            contract
+            if contract is not None
+            else self._contract_for_value_type(value_type)
+        )
         return []
 
     def _analyze_statement(
@@ -502,20 +617,33 @@ class SemanticAnalyzer:
 
         if isinstance(statement, (SourceDeclaration, LetDeclaration)):
             diagnostics = self._analyze_expression(statement.value)
-            value_type = self._infer_type(statement.value)
+            value_contract = self._infer_contract(statement.value)
+            value_type = self._value_type_for_contract(value_contract)
             diagnostics.extend(
-                self._declare(statement.name, value_type, statement.span)
+                self._declare(
+                    statement.name,
+                    value_type,
+                    statement.span,
+                    contract=value_contract,
+                )
             )
             return diagnostics
 
         if isinstance(statement, AnalyzeDeclaration):
             diagnostics: list[Diagnostic] = []
+            value_contract = None
             value_type = ValueType.UNKNOWN
             if statement.value is not None:
                 diagnostics.extend(self._analyze_expression(statement.value))
-                value_type = self._infer_type(statement.value)
+                value_contract = self._infer_contract(statement.value)
+                value_type = self._value_type_for_contract(value_contract)
             diagnostics.extend(
-                self._declare(statement.name, value_type, statement.span)
+                self._declare(
+                    statement.name,
+                    value_type,
+                    statement.span,
+                    contract=value_contract,
+                )
             )
             return diagnostics
 
@@ -652,7 +780,7 @@ class SemanticAnalyzer:
         expression: Expression,
         *,
         local_names: set[str] | None = None,
-        local_types: dict[str, ValueType] | None = None,
+        local_types: dict[str, TypeContract | None] | None = None,
     ) -> list[Diagnostic]:
         if isinstance(expression, Reference):
             known = (
@@ -716,31 +844,41 @@ class SemanticAnalyzer:
                         )
                     )
 
-                expected_types = self._function_parameter_types(
+                expected_contracts = self._function_parameter_contracts(
                     user_function
                 )
                 for position, (argument, expected) in enumerate(
-                    zip(expression.arguments, expected_types),
+                    zip(expression.arguments, expected_contracts),
                     start=1,
                 ):
-                    actual = self._infer_type(
+                    if expected is None or expected.name == "any":
+                        continue
+                    actual = self._infer_contract(
                         argument,
                         local_types=local_types,
                     )
-                    if (
-                        expected is not ValueType.UNKNOWN
-                        and actual is not ValueType.UNKNOWN
-                        and actual is not expected
-                    ):
+                    label = (
+                        f"Argument {position} to {expression.name}()"
+                    )
+                    if not self._contracts_match(expected, actual):
                         diagnostics.append(
                             self._diagnostic(
                                 DiagnosticCode.SEM_TYPE_MISMATCH,
                                 (
-                                    f"Argument {position} to "
-                                    f"{expression.name}() must be "
-                                    f"{expected.value}, not {actual.value}"
+                                    f"{label} must be {expected.render()}, "
+                                    "not "
+                                    f"{actual.render() if actual is not None else 'unknown'}"
                                 ),
                                 argument.span,
+                            )
+                        )
+                    else:
+                        diagnostics.extend(
+                            self._list_literal_contract_diagnostics(
+                                argument,
+                                expected,
+                                local_types=local_types,
+                                label=label,
                             )
                         )
             else:
@@ -973,82 +1111,129 @@ class SemanticAnalyzer:
 
         return diagnostics
 
+    def _infer_function_contract(
+        self,
+        name: str,
+        *,
+        stack: tuple[str, ...] = (),
+    ) -> TypeContract | None:
+        if name in stack:
+            return None
+
+        function = self.functions.get(name)
+        if function is None:
+            return None
+
+        if function.return_type is not None:
+            return parse_type_contract(function.return_type)
+
+        local_types = dict(
+            zip(
+                function.parameters,
+                self._function_parameter_contracts(function),
+                strict=True,
+            )
+        )
+        return self._infer_contract(
+            function.body,
+            local_types=local_types,
+            function_stack=(*stack, name),
+        )
+
     def _infer_function_type(
         self,
         name: str,
         *,
         stack: tuple[str, ...] = (),
     ) -> ValueType:
-        if name in stack:
-            return ValueType.UNKNOWN
-
-        function = self.functions.get(name)
-        if function is None:
-            return ValueType.UNKNOWN
-
-        if function.return_type is not None:
-            return _FUNCTION_TYPE_NAMES.get(
-                function.return_type,
-                ValueType.UNKNOWN,
-            )
-
-        local_types = dict(
-            zip(
-                function.parameters,
-                self._function_parameter_types(function),
-                strict=True,
-            )
-        )
-        return self._infer_type(
-            function.body,
-            local_types=local_types,
-            function_stack=(*stack, name),
+        return self._value_type_for_contract(
+            self._infer_function_contract(name, stack=stack)
         )
 
-    def _infer_type(
+    def _infer_contract(
         self,
         expression: Expression,
         *,
-        local_types: dict[str, ValueType] | None = None,
+        local_types: dict[str, TypeContract | None] | None = None,
         function_stack: tuple[str, ...] = (),
-    ) -> ValueType:
+    ) -> TypeContract | None:
         if isinstance(expression, StringLiteral):
-            return ValueType.STRING
+            return TypeContract("string")
         if isinstance(expression, NumberLiteral):
-            return ValueType.NUMBER
+            return TypeContract("number")
         if isinstance(expression, BooleanLiteral):
-            return ValueType.BOOLEAN
+            return TypeContract("boolean")
         if isinstance(expression, Reference):
             if local_types is not None:
-                return local_types.get(
-                    expression.name,
-                    ValueType.UNKNOWN,
-                )
-            return self.declarations.get(
-                expression.name,
-                ValueType.UNKNOWN,
-            )
+                return local_types.get(expression.name)
+            return self.declaration_contracts.get(expression.name)
         if isinstance(expression, CallExpression):
+            if expression.name == "list":
+                items = tuple(
+                    self._infer_contract(
+                        item,
+                        local_types=local_types,
+                        function_stack=function_stack,
+                    )
+                    for item in expression.arguments
+                )
+                if (
+                    items
+                    and items[0] is not None
+                    and all(item == items[0] for item in items)
+                ):
+                    return TypeContract("list", items[0])
+                return TypeContract("list", TypeContract("any"))
+            if expression.name == "keys":
+                return TypeContract("list", TypeContract("string"))
+            if expression.name == "values":
+                return TypeContract("list", TypeContract("any"))
             if expression.name in _BUILTIN_RESULTS:
-                return _BUILTIN_RESULTS[
-                    expression.name
-                ]
-            return self._infer_function_type(
+                return self._contract_for_value_type(
+                    _BUILTIN_RESULTS[expression.name]
+                )
+            return self._infer_function_contract(
                 expression.name,
                 stack=function_stack,
             )
         if isinstance(expression, ListLiteral):
-            return ValueType.LIST
+            items = tuple(
+                self._infer_contract(
+                    item,
+                    local_types=local_types,
+                    function_stack=function_stack,
+                )
+                for item in expression.items
+            )
+            if (
+                items
+                and items[0] is not None
+                and all(item == items[0] for item in items)
+            ):
+                return TypeContract("list", items[0])
+            return TypeContract("list", TypeContract("any"))
         if isinstance(expression, ObjectLiteral):
-            return ValueType.OBJECT
+            return TypeContract("object")
         if isinstance(expression, MemberAccess):
-            return ValueType.UNKNOWN
+            return None
         if isinstance(expression, IndexAccess):
-            return ValueType.UNKNOWN
+            target = self._infer_contract(
+                expression.target,
+                local_types=local_types,
+                function_stack=function_stack,
+            )
+            if (
+                target is not None
+                and target.name == "list"
+                and target.item is not None
+                and target.item.name != "any"
+            ):
+                return target.item
+            return None
         if isinstance(expression, UnaryExpression):
             if expression.operator == "!":
-                return ValueType.BOOLEAN
-            return ValueType.NUMBER
+                return TypeContract("boolean")
+            return TypeContract("number")
         if isinstance(expression, BinaryExpression):
             if expression.operator in {
                 "&&",
@@ -1060,37 +1245,56 @@ class SemanticAnalyzer:
                 "<",
                 "<=",
             }:
-                return ValueType.BOOLEAN
+                return TypeContract("boolean")
             if expression.operator == "+":
-                left = self._infer_type(
+                left = self._infer_contract(
                     expression.left,
                     local_types=local_types,
                     function_stack=function_stack,
                 )
-                right = self._infer_type(
+                right = self._infer_contract(
                     expression.right,
                     local_types=local_types,
                     function_stack=function_stack,
                 )
                 if (
-                    left is ValueType.STRING
-                    and right is ValueType.STRING
+                    left is not None
+                    and right is not None
+                    and left.name == "string"
+                    and right.name == "string"
                 ):
-                    return ValueType.STRING
+                    return TypeContract("string")
                 if (
-                    left is ValueType.NUMBER
-                    and right is ValueType.NUMBER
+                    left is not None
+                    and right is not None
+                    and left.name == "number"
+                    and right.name == "number"
                 ):
-                    return ValueType.NUMBER
-                return ValueType.UNKNOWN
+                    return TypeContract("number")
+                return None
             if expression.operator in {
                 "-",
                 "*",
                 "/",
                 "%",
             }:
-                return ValueType.NUMBER
-        return ValueType.UNKNOWN
+                return TypeContract("number")
+        return None
+
+    def _infer_type(
+        self,
+        expression: Expression,
+        *,
+        local_types: dict[str, TypeContract | None] | None = None,
+        function_stack: tuple[str, ...] = (),
+    ) -> ValueType:
+        return self._value_type_for_contract(
+            self._infer_contract(
+                expression,
+                local_types=local_types,
+                function_stack=function_stack,
+            )
+        )
 
 
 def analyze_result(program: Program) -> SemanticResult:

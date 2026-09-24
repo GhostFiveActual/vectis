@@ -280,6 +280,42 @@ def _classification(
     return ("variable", 0)
 
 
+def _consume_type_annotation(
+    tokens: list[object],
+    cursor: int,
+    type_annotations: set[int],
+) -> int | None:
+    if (
+        cursor >= len(tokens)
+        or getattr(tokens[cursor], "type", None) != "identifier"
+    ):
+        return None
+
+    type_annotations.add(cursor)
+    cursor += 1
+    if not (
+        cursor < len(tokens)
+        and getattr(tokens[cursor], "type", None) == "punctuation"
+        and getattr(tokens[cursor], "value", None) == "["
+    ):
+        return cursor
+
+    cursor = _consume_type_annotation(
+        tokens,
+        cursor + 1,
+        type_annotations,
+    )
+    if cursor is None:
+        return None
+    if not (
+        cursor < len(tokens)
+        and getattr(tokens[cursor], "type", None) == "punctuation"
+        and getattr(tokens[cursor], "value", None) == "]"
+    ):
+        return None
+    return cursor + 1
+
+
 def _function_context(
     tokens: list[object],
 ) -> tuple[
@@ -386,7 +422,7 @@ def _function_context(
                 cursor += 1
 
                 if (
-                    cursor + 1 < len(tokens)
+                    cursor < len(tokens)
                     and getattr(
                         tokens[cursor],
                         "type",
@@ -399,15 +435,15 @@ def _function_context(
                         None,
                     )
                     == ":"
-                    and getattr(
-                        tokens[cursor + 1],
-                        "type",
-                        None,
-                    )
-                    == "identifier"
                 ):
-                    type_annotations.add(cursor + 1)
-                    cursor += 2
+                    parsed_cursor = _consume_type_annotation(
+                        tokens,
+                        cursor + 1,
+                        type_annotations,
+                    )
+                    if parsed_cursor is None:
+                        break
+                    cursor = parsed_cursor
                 continue
 
             if (
@@ -428,7 +464,7 @@ def _function_context(
 
         body_open = closing_index + 1
         if (
-            body_open + 1 < len(tokens)
+            body_open < len(tokens)
             and getattr(
                 tokens[body_open],
                 "type",
@@ -441,15 +477,16 @@ def _function_context(
                 None,
             )
             == ":"
-            and getattr(
-                tokens[body_open + 1],
-                "type",
-                None,
-            )
-            == "identifier"
         ):
-            type_annotations.add(body_open + 1)
-            body_open += 2
+            parsed_body_open = _consume_type_annotation(
+                tokens,
+                body_open + 1,
+                type_annotations,
+            )
+            if parsed_body_open is None:
+                index += 1
+                continue
+            body_open = parsed_body_open
         if not (
             body_open < len(tokens)
             and getattr(
