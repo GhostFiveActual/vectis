@@ -167,6 +167,23 @@ mission "Release" {
 
 A function body is one returned expression. Parameters are local to the function and form its complete reference environment. Functions may call deterministic built-ins and other user-defined pure functions, including functions declared later in the source.
 
+Pure-function parameters and results may carry contextual type annotations:
+
+```vectis
+function release_ready(
+    score: number,
+    risk: number
+): boolean {
+    return score >= 90 && risk <= 25;
+}
+
+function label(value: any): string {
+    return upper(string(value));
+}
+```
+
+Supported annotations are `string`, `number`, `boolean`, `list`, `object`, and `any`. Parameters may be annotated individually, the result annotation is optional, and existing untyped declarations remain valid. Known call-site argument types are checked against annotated parameters. A declared result type is checked against the statically inferred function body when that body type is known. `any` preserves the existing unknown-type behavior without weakening runtime authority boundaries.
+
 Direct and indirect recursion are rejected before graph generation. Function bodies cannot capture mission values or contain capability, publication, analysis, process, filesystem, or network statements.
 
 During compilation, calls expand into ordinary VECTIS expressions. Graph metadata preserves the source expression when expansion occurs, while runtime evaluation uses the expanded deterministic expression.

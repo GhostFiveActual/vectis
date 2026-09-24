@@ -219,6 +219,8 @@ class FunctionDeclaration(Statement):
     name: str
     parameters: tuple[str, ...]
     body: Expression
+    parameter_types: tuple[str | None, ...] = ()
+    return_type: str | None = None
 
     def __post_init__(self) -> None:
         Node.__post_init__(self)
@@ -231,6 +233,28 @@ class FunctionDeclaration(Statement):
             _require_name(
                 parameter,
                 "FunctionDeclaration parameter",
+            )
+        if not isinstance(self.parameter_types, tuple):
+            raise TypeError(
+                "FunctionDeclaration.parameter_types must be tuple"
+            )
+        if self.parameter_types and (
+            len(self.parameter_types) != len(self.parameters)
+        ):
+            raise ValueError(
+                "FunctionDeclaration.parameter_types must be empty "
+                "or match parameters"
+            )
+        for annotation in self.parameter_types:
+            if annotation is not None:
+                _require_name(
+                    annotation,
+                    "FunctionDeclaration parameter type",
+                )
+        if self.return_type is not None:
+            _require_name(
+                self.return_type,
+                "FunctionDeclaration.return_type",
             )
         if not isinstance(self.body, Expression):
             raise TypeError(

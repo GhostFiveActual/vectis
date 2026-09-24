@@ -66,7 +66,7 @@ Rename returns a normal LSP `WorkspaceEdit` and does not modify source files its
 
 ## Signature help
 
-`textDocument/signatureHelp` reports callable information for deterministic pure functions while a call is being written. Built-in labels and arity come from the canonical evaluator registry. User-defined labels preserve the parameter names declared in VECTIS source.
+`textDocument/signatureHelp` reports callable information for deterministic pure functions while a call is being written. Built-in labels and arity come from the canonical evaluator registry. User-defined labels preserve declared parameter names, optional parameter type annotations, and an optional declared return type from VECTIS source.
 
 The signature helper uses the same overlay-aware workspace as navigation when the current source graph is complete. If the current call site is temporarily incomplete, declaration headers can still be recovered from open buffers through the canonical lexer. This keeps an unsaved imported function available at the normal `(` and `,` signature triggers without changing parser or compiler behavior.
 

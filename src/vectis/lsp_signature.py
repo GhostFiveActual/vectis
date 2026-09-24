@@ -62,29 +62,32 @@ def signature_help(
             argument_index,
         )
 
-    parameters = _workspace_parameters(
+    signature = _workspace_signature(
         workspace,
         name,
     )
-    if parameters is None:
+    if signature is None:
         for candidate in (
             source,
             *tuple(supplemental_sources),
         ):
-            parameters = _source_parameters(
+            signature = _source_signature(
                 candidate,
                 name,
             )
-            if parameters is not None:
+            if signature is not None:
                 break
 
-    if parameters is None:
+    if signature is None:
         return None
 
+    parameters, parameter_types, return_type = signature
     return _user_help(
         name,
         parameters,
         argument_index,
+        parameter_types=parameter_types,
+        return_type=return_type,
     )
 
 
@@ -203,10 +206,14 @@ def _active_call(
     )
 
 
-def _workspace_parameters(
+def _workspace_signature(
     workspace: WorkspaceProgram | None,
     name: str,
-) -> tuple[str, ...] | None:
+) -> tuple[
+    tuple[str, ...],
+    tuple[str | None, ...],
+    str | None,
+] | None:
     if workspace is None:
         return None
 
@@ -224,17 +231,29 @@ def _workspace_parameters(
         ),
         None,
     )
+    if declaration is None:
+        return None
+
+    parameter_types = (
+        declaration.parameter_types
+        if declaration.parameter_types
+        else tuple(None for _parameter in declaration.parameters)
+    )
     return (
-        declaration.parameters
-        if declaration is not None
-        else None
+        declaration.parameters,
+        parameter_types,
+        declaration.return_type,
     )
 
 
-def _source_parameters(
+def _source_signature(
     source: str,
     name: str,
-) -> tuple[str, ...] | None:
+) -> tuple[
+    tuple[str, ...],
+    tuple[str | None, ...],
+    str | None,
+] | None:
     try:
         tokens = Lexer(source).tokenize()
     except DiagnosticError:
@@ -261,35 +280,79 @@ def _source_parameters(
             continue
 
         parameters: list[str] = []
+        parameter_types: list[str | None] = []
         cursor = index + 3
-        expect_parameter = True
+        valid = True
 
         while cursor < len(tokens):
             token = tokens[cursor]
+            if token.type == "punctuation" and token.value == ")":
+                cursor += 1
+                break
+            if token.type != "identifier":
+                valid = False
+                break
+
+            parameters.append(token.value)
+            cursor += 1
+            annotation = None
 
             if (
-                token.type == "punctuation"
-                and token.value == ")"
+                cursor < len(tokens)
+                and tokens[cursor].type == "punctuation"
+                and tokens[cursor].value == ":"
             ):
-                return tuple(parameters)
-
-            if expect_parameter:
-                if token.type != "identifier":
+                cursor += 1
+                if (
+                    cursor >= len(tokens)
+                    or tokens[cursor].type != "identifier"
+                ):
+                    valid = False
                     break
-                parameters.append(token.value)
-                expect_parameter = False
+                annotation = tokens[cursor].value
                 cursor += 1
-                continue
+
+            parameter_types.append(annotation)
 
             if (
-                token.type == "punctuation"
-                and token.value == ","
+                cursor < len(tokens)
+                and tokens[cursor].type == "punctuation"
+                and tokens[cursor].value == ","
             ):
-                expect_parameter = True
                 cursor += 1
                 continue
-
+            if (
+                cursor < len(tokens)
+                and tokens[cursor].type == "punctuation"
+                and tokens[cursor].value == ")"
+            ):
+                cursor += 1
+                break
+            valid = False
             break
+
+        if not valid or len(parameters) != len(parameter_types):
+            continue
+
+        return_type = None
+        if (
+            cursor < len(tokens)
+            and tokens[cursor].type == "punctuation"
+            and tokens[cursor].value == ":"
+        ):
+            cursor += 1
+            if (
+                cursor >= len(tokens)
+                or tokens[cursor].type != "identifier"
+            ):
+                continue
+            return_type = tokens[cursor].value
+
+        return (
+            tuple(parameters),
+            tuple(parameter_types),
+            return_type,
+        )
 
     return None
 
@@ -361,17 +424,37 @@ def _user_help(
     name: str,
     parameters: tuple[str, ...],
     argument_index: int,
+    *,
+    parameter_types: tuple[str | None, ...],
+    return_type: str | None,
 ) -> dict[str, object]:
+    labels = tuple(
+        (
+            parameter
+            if annotation is None
+            else f"{parameter}: {annotation}"
+        )
+        for parameter, annotation in zip(
+            parameters,
+            parameter_types,
+            strict=True,
+        )
+    )
+    result_suffix = (
+        ""
+        if return_type is None
+        else f": {return_type}"
+    )
+    documentation = "User-defined pure VECTIS function."
+    if return_type is not None:
+        documentation += f" Declared return type: {return_type}."
+
     signature: dict[str, object] = {
-        "label": (
-            f"{name}({', '.join(parameters)})"
-        ),
-        "documentation": (
-            "User-defined pure VECTIS function."
-        ),
+        "label": f"{name}({', '.join(labels)}){result_suffix}",
+        "documentation": documentation,
         "parameters": [
-            {"label": parameter}
-            for parameter in parameters
+            {"label": label}
+            for label in labels
         ],
     }
 

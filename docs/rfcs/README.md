@@ -31,6 +31,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 15. [RFC 0015: Capability configuration preview](0015-capability-configuration-preview.md)
 16. [RFC 0016: Deterministic project templates](0016-project-templates.md)
 17. [RFC 0017: Deterministic module browsing](0017-module-browsing.md)
+18. [RFC 0018: Typed pure-function signatures](0018-typed-pure-function-signatures.md)
 
 ## When an RFC is required
 
