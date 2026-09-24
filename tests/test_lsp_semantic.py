@@ -156,6 +156,18 @@ class LspSemanticTokenTests(
         self.assertIn((0, 31, 7, "keyword", 0), items)
         self.assertIn((1, 11, 5, "parameter", 0), items)
 
+    def test_typed_list_contract_marks_nested_types_as_keywords(self) -> None:
+        source = (
+            "function first(values: list[number]): number {\n"
+            "    return values[0];\n"
+            "}\n"
+        )
+        items = _decoded(source, semantic_tokens(source))
+
+        self.assertIn((0, 23, 4, "keyword", 0), items)
+        self.assertIn((0, 28, 6, "keyword", 0), items)
+        self.assertIn((0, 38, 6, "keyword", 0), items)
+
     def test_multiline_string_is_split_by_line(
         self,
     ) -> None:

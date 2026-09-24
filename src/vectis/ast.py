@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from vectis.source_span import SourceSpan
+from vectis.type_contracts import is_type_contract_shape
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -246,15 +247,21 @@ class FunctionDeclaration(Statement):
                 "or match parameters"
             )
         for annotation in self.parameter_types:
-            if annotation is not None:
-                _require_name(
-                    annotation,
-                    "FunctionDeclaration parameter type",
+            if (
+                annotation is not None
+                and not is_type_contract_shape(annotation)
+            ):
+                raise ValueError(
+                    "FunctionDeclaration parameter type must be "
+                    "a canonical type label"
                 )
-        if self.return_type is not None:
-            _require_name(
-                self.return_type,
-                "FunctionDeclaration.return_type",
+        if (
+            self.return_type is not None
+            and not is_type_contract_shape(self.return_type)
+        ):
+            raise ValueError(
+                "FunctionDeclaration.return_type must be "
+                "a canonical type label"
             )
         if not isinstance(self.body, Expression):
             raise TypeError(

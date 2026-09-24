@@ -163,6 +163,19 @@ class Parser:
             path=path.value,
         )
 
+    def _parse_type_annotation(self, *, description: str) -> str:
+        name = self._expect(
+            "identifier",
+            description=description,
+        ).value
+        if self._match("punctuation", "[") is None:
+            return name
+        item = self._parse_type_annotation(
+            description="list item type",
+        )
+        self._expect("punctuation", "]")
+        return f"{name}[{item}]"
+
     def _parse_function(self) -> FunctionDeclaration:
         start = self._expect("keyword", "function")
         name = self._expect(
@@ -183,10 +196,9 @@ class Parser:
 
                 annotation = None
                 if self._match("punctuation", ":") is not None:
-                    annotation = self._expect(
-                        "identifier",
+                    annotation = self._parse_type_annotation(
                         description="function parameter type",
-                    ).value
+                    )
                 parameter_types.append(annotation)
 
                 if self._match("punctuation", ",") is None:
@@ -196,10 +208,9 @@ class Parser:
 
         return_type = None
         if self._match("punctuation", ":") is not None:
-            return_type = self._expect(
-                "identifier",
+            return_type = self._parse_type_annotation(
                 description="function return type",
-            ).value
+            )
 
         self._expect("punctuation", "{")
         self._expect("keyword", "return")

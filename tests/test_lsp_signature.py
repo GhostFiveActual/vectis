@@ -256,6 +256,27 @@ class LspSignatureHelpTests(unittest.TestCase):
         )
         self.assertEqual(result["activeParameter"], 1)
 
+    def test_typed_list_contract_is_exposed(self) -> None:
+        source = (
+            "function first(values: list[number]): number {\n"
+            "    return values[0];\n"
+            "}\n"
+            'mission "Signature" { let result first([96, 92]); }\n'
+        )
+        character = source.splitlines()[3].index("92") + 1
+        result = signature_help(
+            source,
+            line=3,
+            character=character,
+            supplemental_sources=(source,),
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            result["signatures"][0]["label"],
+            "first(values: list[number]): number",
+        )
+
     def test_signature_cursor_uses_utf16_character_units(self) -> None:
         source = 'mission "😀" { let result concat("a", "b"); }'
         target = source.index('"b"') + 1
