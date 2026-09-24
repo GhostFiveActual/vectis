@@ -62,9 +62,12 @@ def semantic_tokens(
     except DiagnosticError:
         return {"data": []}
 
-    function_names, parameter_declarations, regions = (
-        _function_context(tokens)
-    )
+    (
+        function_names,
+        parameter_declarations,
+        type_annotations,
+        regions,
+    ) = _function_context(tokens)
     lines = source.split("\n")
     encoded: list[int] = []
     previous_line = 0
@@ -78,6 +81,7 @@ def semantic_tokens(
             parameter_declarations=(
                 parameter_declarations
             ),
+            type_annotations=type_annotations,
             regions=regions,
         )
         if classification is None:
@@ -126,6 +130,7 @@ def _classification(
     *,
     function_names: frozenset[int],
     parameter_declarations: frozenset[int],
+    type_annotations: frozenset[int],
     regions: tuple[_FunctionRegion, ...],
 ) -> tuple[str, int] | None:
     token = tokens[index]
@@ -165,6 +170,9 @@ def _classification(
             "parameter",
             _DECLARATION,
         )
+
+    if index in type_annotations:
+        return ("keyword", 0)
 
     region = next(
         (
@@ -277,10 +285,12 @@ def _function_context(
 ) -> tuple[
     frozenset[int],
     frozenset[int],
+    frozenset[int],
     tuple[_FunctionRegion, ...],
 ]:
     function_names: set[int] = set()
     parameter_declarations: set[int] = set()
+    type_annotations: set[int] = set()
     regions: list[_FunctionRegion] = []
 
     index = 0
@@ -374,6 +384,30 @@ def _function_context(
                 )
                 expect_parameter = False
                 cursor += 1
+
+                if (
+                    cursor + 1 < len(tokens)
+                    and getattr(
+                        tokens[cursor],
+                        "type",
+                        None,
+                    )
+                    == "punctuation"
+                    and getattr(
+                        tokens[cursor],
+                        "value",
+                        None,
+                    )
+                    == ":"
+                    and getattr(
+                        tokens[cursor + 1],
+                        "type",
+                        None,
+                    )
+                    == "identifier"
+                ):
+                    type_annotations.add(cursor + 1)
+                    cursor += 2
                 continue
 
             if (
@@ -393,6 +427,29 @@ def _function_context(
             continue
 
         body_open = closing_index + 1
+        if (
+            body_open + 1 < len(tokens)
+            and getattr(
+                tokens[body_open],
+                "type",
+                None,
+            )
+            == "punctuation"
+            and getattr(
+                tokens[body_open],
+                "value",
+                None,
+            )
+            == ":"
+            and getattr(
+                tokens[body_open + 1],
+                "type",
+                None,
+            )
+            == "identifier"
+        ):
+            type_annotations.add(body_open + 1)
+            body_open += 2
         if not (
             body_open < len(tokens)
             and getattr(
@@ -458,6 +515,7 @@ def _function_context(
         frozenset(
             parameter_declarations
         ),
+        frozenset(type_annotations),
         tuple(regions),
     )
 

@@ -141,6 +141,21 @@ class LspSemanticTokenTests(
             items,
         )
 
+    def test_typed_function_preserves_parameter_semantics(
+        self,
+    ) -> None:
+        source = (
+            "function ready(value: number): boolean {\n"
+            "    return value >= 90;\n"
+            "}\n"
+        )
+        items = _decoded(source, semantic_tokens(source))
+
+        self.assertIn((0, 15, 5, "parameter", 1), items)
+        self.assertIn((0, 22, 6, "keyword", 0), items)
+        self.assertIn((0, 31, 7, "keyword", 0), items)
+        self.assertIn((1, 11, 5, "parameter", 0), items)
+
     def test_multiline_string_is_split_by_line(
         self,
     ) -> None:

@@ -82,6 +82,16 @@ class ValueType(str, Enum):
     UNKNOWN = "unknown"
 
 
+_FUNCTION_TYPE_NAMES: dict[str, ValueType] = {
+    "string": ValueType.STRING,
+    "number": ValueType.NUMBER,
+    "boolean": ValueType.BOOLEAN,
+    "list": ValueType.LIST,
+    "object": ValueType.OBJECT,
+    "any": ValueType.UNKNOWN,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class SemanticResult:
     diagnostics: tuple[Diagnostic, ...]
@@ -319,14 +329,124 @@ class SemanticAnalyzer:
 
         return diagnostics
 
+    def _function_parameter_types(
+        self,
+        statement: FunctionDeclaration,
+    ) -> tuple[ValueType, ...]:
+        annotations = (
+            statement.parameter_types
+            if statement.parameter_types
+            else tuple(None for _parameter in statement.parameters)
+        )
+        return tuple(
+            (
+                ValueType.UNKNOWN
+                if annotation is None
+                else _FUNCTION_TYPE_NAMES.get(
+                    annotation,
+                    ValueType.UNKNOWN,
+                )
+            )
+            for annotation in annotations
+        )
+
+    def _function_annotation_diagnostics(
+        self,
+        statement: FunctionDeclaration,
+    ) -> list[Diagnostic]:
+        diagnostics: list[Diagnostic] = []
+        annotations = (
+            statement.parameter_types
+            if statement.parameter_types
+            else tuple(None for _parameter in statement.parameters)
+        )
+
+        for parameter, annotation in zip(
+            statement.parameters,
+            annotations,
+            strict=True,
+        ):
+            if (
+                annotation is not None
+                and annotation not in _FUNCTION_TYPE_NAMES
+            ):
+                diagnostics.append(
+                    self._diagnostic(
+                        DiagnosticCode.SEM_TYPE_MISMATCH,
+                        (
+                            f"Unknown function type {annotation!r} "
+                            f"for parameter {parameter!r}"
+                        ),
+                        statement.span,
+                    )
+                )
+
+        if (
+            statement.return_type is not None
+            and statement.return_type not in _FUNCTION_TYPE_NAMES
+        ):
+            diagnostics.append(
+                self._diagnostic(
+                    DiagnosticCode.SEM_TYPE_MISMATCH,
+                    (
+                        "Unknown function return type: "
+                        f"{statement.return_type}"
+                    ),
+                    statement.span,
+                )
+            )
+
+        return diagnostics
+
     def _analyze_function(
         self,
         statement: FunctionDeclaration,
     ) -> list[Diagnostic]:
-        return self._analyze_expression(
-            statement.body,
-            local_names=set(statement.parameters),
+        diagnostics = self._function_annotation_diagnostics(statement)
+        parameter_types = self._function_parameter_types(statement)
+        local_types = dict(
+            zip(
+                statement.parameters,
+                parameter_types,
+                strict=True,
+            )
         )
+        diagnostics.extend(
+            self._analyze_expression(
+                statement.body,
+                local_names=set(statement.parameters),
+                local_types=local_types,
+            )
+        )
+
+        if (
+            statement.return_type is not None
+            and statement.return_type in _FUNCTION_TYPE_NAMES
+        ):
+            expected = _FUNCTION_TYPE_NAMES[statement.return_type]
+            actual = self._infer_type(
+                statement.body,
+                local_types=local_types,
+                function_stack=(statement.name,),
+            )
+            if (
+                expected is not ValueType.UNKNOWN
+                and actual is not ValueType.UNKNOWN
+                and actual is not expected
+            ):
+                diagnostics.append(
+                    self._diagnostic(
+                        DiagnosticCode.SEM_TYPE_MISMATCH,
+                        (
+                            f"Function {statement.name}() declares "
+                            f"return type {expected.value} "
+                            f"but body evaluates to {actual.value}"
+                        ),
+                        statement.body.span,
+                    )
+                )
+
+        return diagnostics
 
     def _declare(
         self,
@@ -532,6 +652,7 @@ class SemanticAnalyzer:
         expression: Expression,
         *,
         local_names: set[str] | None = None,
+        local_types: dict[str, ValueType] | None = None,
     ) -> list[Diagnostic]:
         if isinstance(expression, Reference):
             known = (
@@ -594,6 +715,34 @@ class SemanticAnalyzer:
                             expression.span,
                         )
                     )
+
+                expected_types = self._function_parameter_types(
+                    user_function
+                )
+                for position, (argument, expected) in enumerate(
+                    zip(expression.arguments, expected_types),
+                    start=1,
+                ):
+                    actual = self._infer_type(
+                        argument,
+                        local_types=local_types,
+                    )
+                    if (
+                        expected is not ValueType.UNKNOWN
+                        and actual is not ValueType.UNKNOWN
+                        and actual is not expected
+                    ):
+                        diagnostics.append(
+                            self._diagnostic(
+                                DiagnosticCode.SEM_TYPE_MISMATCH,
+                                (
+                                    f"Argument {position} to "
+                                    f"{expression.name}() must be "
+                                    f"{expected.value}, not {actual.value}"
+                                ),
+                                argument.span,
+                            )
+                        )
             else:
                 diagnostics.append(
                     self._diagnostic(
@@ -608,6 +757,7 @@ class SemanticAnalyzer:
                     self._analyze_expression(
                         argument,
                         local_names=local_names,
+                        local_types=local_types,
                     )
                 )
             return diagnostics
@@ -617,10 +767,12 @@ class SemanticAnalyzer:
                 *self._analyze_expression(
                     expression.left,
                     local_names=local_names,
+                    local_types=local_types,
                 ),
                 *self._analyze_expression(
                     expression.right,
                     local_names=local_names,
+                    local_types=local_types,
                 ),
             ]
 
@@ -631,6 +783,7 @@ class SemanticAnalyzer:
                     self._analyze_expression(
                         item,
                         local_names=local_names,
+                        local_types=local_types,
                     )
                 )
             return diagnostics
@@ -652,6 +805,7 @@ class SemanticAnalyzer:
                     self._analyze_expression(
                         item,
                         local_names=local_names,
+                        local_types=local_types,
                     )
                 )
             return diagnostics
@@ -660,6 +814,7 @@ class SemanticAnalyzer:
             return self._analyze_expression(
                 expression.target,
                 local_names=local_names,
+                local_types=local_types,
             )
 
         if isinstance(expression, IndexAccess):
@@ -667,10 +822,12 @@ class SemanticAnalyzer:
                 *self._analyze_expression(
                     expression.target,
                     local_names=local_names,
+                    local_types=local_types,
                 ),
                 *self._analyze_expression(
                     expression.index,
                     local_names=local_names,
+                    local_types=local_types,
                 ),
             ]
 
@@ -678,6 +835,7 @@ class SemanticAnalyzer:
             return self._analyze_expression(
                 expression.operand,
                 local_names=local_names,
+                local_types=local_types,
             )
 
         if isinstance(
@@ -828,10 +986,19 @@ class SemanticAnalyzer:
         if function is None:
             return ValueType.UNKNOWN
 
-        local_types = {
-            parameter: ValueType.UNKNOWN
-            for parameter in function.parameters
-        }
+        if function.return_type is not None:
+            return _FUNCTION_TYPE_NAMES.get(
+                function.return_type,
+                ValueType.UNKNOWN,
+            )
+
+        local_types = dict(
+            zip(
+                function.parameters,
+                self._function_parameter_types(function),
+                strict=True,
+            )
+        )
         return self._infer_type(
             function.body,
             local_types=local_types,

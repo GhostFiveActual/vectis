@@ -75,10 +75,38 @@ class ModuleBrowserTests(unittest.TestCase):
                 [{
                     "name": "clamp_score",
                     "parameters": ["value", "minimum", "maximum"],
+                    "parameter_types": [None, None, None],
+                    "return_type": None,
                 }],
             )
             self.assertEqual(by_path["main.vectis"]["kind"], "entry")
             self.assertFalse(by_path["main.vectis"]["importable"])
+
+    def test_typed_function_contract_is_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vectis.toml").write_text(
+                "# GHOST FIVE // VECTIS\n[project]\n",
+                encoding="utf-8",
+            )
+            self.write(
+                root,
+                "lib/gate.vectis",
+                "function ready(value: number): boolean {\n"
+                "    return value >= 90;\n"
+                "}\n",
+            )
+            payload = browse_project_modules(root)
+            function = payload["modules"][0]["functions"][0]
+            self.assertEqual(
+                function,
+                {
+                    "name": "ready",
+                    "parameters": ["value"],
+                    "parameter_types": ["number"],
+                    "return_type": "boolean",
+                },
+            )
 
     def test_import_failures_are_safe_and_project_relative(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

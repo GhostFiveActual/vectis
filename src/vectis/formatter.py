@@ -109,9 +109,33 @@ def _format_statement(statement: Statement, level: int) -> list[str]:
             f"{json.dumps(statement.path, ensure_ascii=False)};"
         ]
     if isinstance(statement, FunctionDeclaration):
-        parameters = ", ".join(statement.parameters)
+        annotations = (
+            statement.parameter_types
+            if statement.parameter_types
+            else tuple(None for _parameter in statement.parameters)
+        )
+        parameters = ", ".join(
+            (
+                name
+                if annotation is None
+                else f"{name}: {annotation}"
+            )
+            for name, annotation in zip(
+                statement.parameters,
+                annotations,
+                strict=True,
+            )
+        )
+        result = (
+            ""
+            if statement.return_type is None
+            else f": {statement.return_type}"
+        )
         return [
-            f"{indent}function {statement.name}({parameters}) {{",
+            (
+                f"{indent}function {statement.name}"
+                f"({parameters}){result} {{"
+            ),
             (
                 f"{indent}    return "
                 f"{format_expression(statement.body)};"

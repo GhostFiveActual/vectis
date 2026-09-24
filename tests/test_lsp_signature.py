@@ -234,6 +234,28 @@ class LspSignatureHelpTests(unittest.TestCase):
             )
 
 
+    def test_typed_user_function_signature_is_exposed(self) -> None:
+        source = (
+            "function ready(value: number, threshold: number): boolean {\n"
+            "    return value >= threshold;\n"
+            "}\n"
+            'mission "Signature" { let result ready(96, 90); }\n'
+        )
+        character = source.splitlines()[3].index("90") + 1
+        result = signature_help(
+            source,
+            line=3,
+            character=character,
+            supplemental_sources=(source,),
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            result["signatures"][0]["label"],
+            "ready(value: number, threshold: number): boolean",
+        )
+        self.assertEqual(result["activeParameter"], 1)
+
     def test_signature_cursor_uses_utf16_character_units(self) -> None:
         source = 'mission "😀" { let result concat("a", "b"); }'
         target = source.index('"b"') + 1

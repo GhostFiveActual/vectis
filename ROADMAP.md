@@ -14,11 +14,11 @@ VECTIS is designed around deterministic planning, inspectable execution, and exp
 
 ## Reusable language units
 
-Top-level user-defined pure functions provide reusable expression logic with explicit parameters, acyclic call graphs, static result inference where possible, and compile-time expansion into ordinary execution plans.
+Top-level user-defined pure functions provide reusable expression logic with explicit parameters, acyclic call graphs, static result inference where possible, and compile-time expansion into ordinary execution plans. Optional contextual type annotations on parameters and return values make function contracts explicit while preserving untyped compatibility. Declared types participate in call-site validation, function-body result checking, signature help, semantic tokens, and module browsing without changing runtime expansion.
 
 Deterministic file imports allow pure functions to be shared across project files with project-bounded path resolution, transitive dependency loading, duplicate-load suppression, module graph inspection, and cycle rejection.
 
-Further reusable-language work includes explicit namespaces, selective imports, module aliases, public and private declaration visibility, typed function signatures, and richer result type checking.
+Further reusable-language work includes explicit namespaces, selective imports, module aliases, public and private declaration visibility, stronger collection element typing, and richer result type checking.
 
 ## Structured data
 

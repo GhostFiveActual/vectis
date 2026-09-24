@@ -293,10 +293,21 @@ def browse_project_modules(
                         }
                     )
             elif isinstance(statement, FunctionDeclaration):
+                parameter_types = (
+                    statement.parameter_types
+                    if statement.parameter_types
+                    else tuple(
+                        None
+                        for _parameter
+                        in statement.parameters
+                    )
+                )
                 functions.append(
                     {
                         "name": statement.name,
                         "parameters": list(statement.parameters),
+                        "parameter_types": list(parameter_types),
+                        "return_type": statement.return_type,
                     }
                 )
             else:

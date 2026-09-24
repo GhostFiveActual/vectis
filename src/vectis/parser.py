@@ -171,33 +171,53 @@ class Parser:
         )
         self._expect("punctuation", "(")
         parameters: list[str] = []
+        parameter_types: list[str | None] = []
 
         if not self._check("punctuation", ")"):
-            parameter = self._expect(
-                "identifier",
-                description="function parameter",
-            )
-            parameters.append(parameter.value)
-
-            while self._match("punctuation", ",") is not None:
+            while True:
                 parameter = self._expect(
                     "identifier",
                     description="function parameter",
                 )
                 parameters.append(parameter.value)
 
+                annotation = None
+                if self._match("punctuation", ":") is not None:
+                    annotation = self._expect(
+                        "identifier",
+                        description="function parameter type",
+                    ).value
+                parameter_types.append(annotation)
+
+                if self._match("punctuation", ",") is None:
+                    break
+
         self._expect("punctuation", ")")
+
+        return_type = None
+        if self._match("punctuation", ":") is not None:
+            return_type = self._expect(
+                "identifier",
+                description="function return type",
+            ).value
+
         self._expect("punctuation", "{")
         self._expect("keyword", "return")
         body = self._parse_expression()
         self._expect("punctuation", ";")
         closing = self._expect("punctuation", "}")
 
+        parsed_parameter_types = tuple(parameter_types)
+        if all(item is None for item in parsed_parameter_types):
+            parsed_parameter_types = ()
+
         return FunctionDeclaration(
             span=self._cover(start.span, closing.span),
             name=name.value,
             parameters=tuple(parameters),
             body=body,
+            parameter_types=parsed_parameter_types,
+            return_type=return_type,
         )
 
     def _parse_mission(self) -> Mission:
