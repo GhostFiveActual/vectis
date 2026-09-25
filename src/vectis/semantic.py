@@ -51,12 +51,19 @@ from vectis.diagnostic import (
     error_diagnostic,
 )
 from vectis.evaluator import BUILTINS
+from vectis.function_identity import (
+    ModuleFunctionId,
+    ModuleFunctionScope,
+)
 from vectis.source_span import SourceSpan
 from vectis.type_contracts import (
     TypeContract,
     common_type_contract,
     parse_type_contract,
 )
+
+
+FunctionKey = str | ModuleFunctionId
 
 
 class SemanticError(DiagnosticError):
@@ -149,13 +156,61 @@ _BUILTIN_RESULTS: dict[str, ValueType] = {
 
 
 class SemanticAnalyzer:
-    def __init__(self, program: Program) -> None:
+    def __init__(
+        self,
+        program: Program,
+        *,
+        function_scope: ModuleFunctionScope | None = None,
+    ) -> None:
         if not isinstance(program, Program):
             raise TypeError("program must be Program")
+        if (
+            function_scope is not None
+            and not isinstance(
+                function_scope,
+                ModuleFunctionScope,
+            )
+        ):
+            raise TypeError(
+                "function_scope must be ModuleFunctionScope or None"
+            )
         self.program = program
+        self.function_scope = function_scope
         self.declarations: dict[str, ValueType] = {}
         self.declaration_contracts: dict[str, TypeContract | None] = {}
-        self.functions: dict[str, FunctionDeclaration] = {}
+        self.functions: dict[FunctionKey, FunctionDeclaration] = {}
+
+    def _declaration_key(
+        self,
+        statement: FunctionDeclaration,
+    ) -> FunctionKey:
+        if self.function_scope is not None:
+            identity = self.function_scope.declaration_id(
+                statement.span
+            )
+            if identity is not None:
+                return identity
+        return statement.name
+
+    def _call_key(
+        self,
+        expression: CallExpression,
+    ) -> FunctionKey:
+        if self.function_scope is not None:
+            identity = self.function_scope.call_target(
+                expression.span
+            )
+            if identity is not None:
+                return identity
+        return expression.name
+
+    def _function_label(
+        self,
+        key: FunctionKey,
+    ) -> str:
+        if isinstance(key, ModuleFunctionId):
+            return key.label
+        return key
 
     def analyze(self) -> list[Diagnostic]:
         return list(self.result().diagnostics)
@@ -211,7 +266,8 @@ class SemanticAnalyzer:
                 )
                 continue
 
-            if statement.name in self.functions:
+            key = self._declaration_key(statement)
+            if key in self.functions:
                 diagnostics.append(
                     self._diagnostic(
                         DiagnosticCode.SEM_DUPLICATE_DECLARATION,
@@ -224,7 +280,7 @@ class SemanticAnalyzer:
                 )
                 continue
 
-            self.functions[statement.name] = statement
+            self.functions[key] = statement
 
             seen: set[str] = set()
             for parameter in statement.parameters:
@@ -246,13 +302,14 @@ class SemanticAnalyzer:
     def _called_user_functions(
         self,
         expression: Expression,
-    ) -> tuple[str, ...]:
-        names: list[str] = []
+    ) -> tuple[FunctionKey, ...]:
+        names: list[FunctionKey] = []
 
         def visit(current: Expression) -> None:
             if isinstance(current, CallExpression):
-                if current.name in self.functions:
-                    names.append(current.name)
+                key = self._call_key(current)
+                if key in self.functions:
+                    names.append(key)
                 for argument in current.arguments:
                     visit(argument)
                 return
@@ -285,14 +342,14 @@ class SemanticAnalyzer:
         self,
     ) -> list[Diagnostic]:
         diagnostics: list[Diagnostic] = []
-        state: dict[str, int] = {
+        state: dict[FunctionKey, int] = {
             name: 0
             for name in self.functions
         }
-        stack: list[str] = []
+        stack: list[FunctionKey] = []
         reported: set[tuple[str, ...]] = set()
 
-        def visit(name: str) -> None:
+        def visit(name: FunctionKey) -> None:
             state[name] = 1
             stack.append(name)
 
@@ -312,7 +369,14 @@ class SemanticAnalyzer:
                         target,
                     ]
                 )
-                identity = tuple(sorted(set(cycle)))
+                identity = tuple(
+                    sorted(
+                        {
+                            self._function_label(item)
+                            for item in cycle
+                        }
+                    )
+                )
                 if identity in reported:
                     continue
                 reported.add(identity)
@@ -321,7 +385,10 @@ class SemanticAnalyzer:
                         DiagnosticCode.SEM_TYPE_MISMATCH,
                         (
                             "Recursive function cycle is not allowed: "
-                            + " -> ".join(cycle)
+                            + " -> ".join(
+                                self._function_label(item)
+                                for item in cycle
+                            )
                         ),
                         self.functions[name].span,
                     )
@@ -590,7 +657,9 @@ class SemanticAnalyzer:
                 actual = self._infer_contract(
                     statement.body,
                     local_types=local_types,
-                    function_stack=(statement.name,),
+                    function_stack=(
+                        self._declaration_key(statement),
+                    ),
                 )
                 structured = self._structured_contract_diagnostics(
                     statement.body,
@@ -870,7 +939,7 @@ class SemanticAnalyzer:
             diagnostics: list[Diagnostic] = []
             builtin = BUILTINS.get(expression.name)
             user_function = self.functions.get(
-                expression.name
+                self._call_key(expression)
             )
             count = len(expression.arguments)
 
@@ -1241,9 +1310,9 @@ class SemanticAnalyzer:
 
     def _infer_function_contract(
         self,
-        name: str,
+        name: FunctionKey,
         *,
-        stack: tuple[str, ...] = (),
+        stack: tuple[FunctionKey, ...] = (),
     ) -> TypeContract | None:
         if name in stack:
             return None
@@ -1270,9 +1339,9 @@ class SemanticAnalyzer:
 
     def _infer_function_type(
         self,
-        name: str,
+        name: FunctionKey,
         *,
-        stack: tuple[str, ...] = (),
+        stack: tuple[FunctionKey, ...] = (),
     ) -> ValueType:
         return self._value_type_for_contract(
             self._infer_function_contract(name, stack=stack)
@@ -1283,7 +1352,7 @@ class SemanticAnalyzer:
         expression: Expression,
         *,
         local_types: dict[str, TypeContract | None] | None = None,
-        function_stack: tuple[str, ...] = (),
+        function_stack: tuple[FunctionKey, ...] = (),
     ) -> TypeContract | None:
         if isinstance(expression, StringLiteral):
             return TypeContract("string")
@@ -1436,7 +1505,7 @@ class SemanticAnalyzer:
                     _BUILTIN_RESULTS[expression.name]
                 )
             return self._infer_function_contract(
-                expression.name,
+                self._call_key(expression),
                 stack=function_stack,
             )
         if isinstance(expression, ListLiteral):
@@ -1558,7 +1627,7 @@ class SemanticAnalyzer:
         expression: Expression,
         *,
         local_types: dict[str, TypeContract | None] | None = None,
-        function_stack: tuple[str, ...] = (),
+        function_stack: tuple[FunctionKey, ...] = (),
     ) -> ValueType:
         return self._value_type_for_contract(
             self._infer_contract(
@@ -1569,9 +1638,23 @@ class SemanticAnalyzer:
         )
 
 
-def analyze_result(program: Program) -> SemanticResult:
-    return SemanticAnalyzer(program).result()
+def analyze_result(
+    program: Program,
+    *,
+    function_scope: ModuleFunctionScope | None = None,
+) -> SemanticResult:
+    return SemanticAnalyzer(
+        program,
+        function_scope=function_scope,
+    ).result()
 
 
-def analyze(program: Program) -> list[Diagnostic]:
-    return SemanticAnalyzer(program).analyze()
+def analyze(
+    program: Program,
+    *,
+    function_scope: ModuleFunctionScope | None = None,
+) -> list[Diagnostic]:
+    return SemanticAnalyzer(
+        program,
+        function_scope=function_scope,
+    ).analyze()

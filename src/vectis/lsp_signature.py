@@ -5,14 +5,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from vectis.ast import FunctionDeclaration
 from vectis.diagnostic import DiagnosticError
 from vectis.evaluator import builtin_manifest
 from vectis.lexer import Lexer
-from vectis.lsp_position import lsp_position_to_offset
-from vectis.lsp_workspace import WorkspaceProgram
+from vectis.lsp_position import (
+    contains_lsp_position,
+    lsp_position_to_offset,
+)
+from vectis.lsp_workspace import (
+    WorkspaceProgram,
+    function_occurrences,
+)
 
 
 @dataclass(slots=True)
@@ -28,6 +35,7 @@ def signature_help(
     line: int,
     character: int,
     workspace: WorkspaceProgram | None = None,
+    path: Path | None = None,
     supplemental_sources: Iterable[str] = (),
 ) -> dict[str, object] | None:
     """Return LSP SignatureHelp for the active pure-function call."""
@@ -46,7 +54,7 @@ def signature_help(
     if active is None:
         return None
 
-    name, argument_index = active
+    name, argument_index, name_offset = active
 
     builtin = next(
         (
@@ -65,6 +73,9 @@ def signature_help(
     signature = _workspace_signature(
         workspace,
         name,
+        source=source,
+        path=path,
+        name_offset=name_offset,
     )
     if signature is None:
         for candidate in (
@@ -106,7 +117,7 @@ def _position_offset(
 def _active_call(
     source: str,
     offset: int,
-) -> tuple[str, int] | None:
+) -> tuple[str, int, int] | None:
     frames: list[_Frame] = []
     in_string = False
     escaped = False
@@ -203,12 +214,30 @@ def _active_call(
     return (
         match.group(1),
         frame.commas,
+        match.start(1),
     )
+
+
+def _offset_lsp_position(
+    source: str,
+    offset: int,
+) -> tuple[int, int]:
+    prefix = source[:offset]
+    line = prefix.count("\n")
+    tail = prefix.rsplit("\n", 1)[-1]
+    character = len(
+        tail.encode("utf-16-le")
+    ) // 2
+    return line, character
 
 
 def _workspace_signature(
     workspace: WorkspaceProgram | None,
     name: str,
+    *,
+    source: str,
+    path: Path | None,
+    name_offset: int,
 ) -> tuple[
     tuple[str, ...],
     tuple[str | None, ...],
@@ -217,10 +246,62 @@ def _workspace_signature(
     if workspace is None:
         return None
 
-    declaration = next(
-        (
+    symbol = None
+    target_path = (
+        path.expanduser().resolve()
+        if path is not None
+        else workspace.entry
+    )
+    token_line, token_character = _offset_lsp_position(
+        source,
+        name_offset,
+    )
+
+    for occurrence in function_occurrences(
+        workspace
+    ):
+        if (
+            occurrence.path == target_path
+            and not occurrence.declaration
+            and occurrence.name == name
+            and contains_lsp_position(
+                source,
+                occurrence.span,
+                line=token_line,
+                character=token_character,
+            )
+        ):
+            symbol = occurrence.symbol
+            break
+
+    declaration = None
+    if symbol is not None:
+        declaration = next(
+            (
+                statement
+                for _module_path, program in workspace.programs
+                for statement in program.statements
+                if (
+                    isinstance(
+                        statement,
+                        FunctionDeclaration,
+                    )
+                    and (
+                        workspace.function_scope.declaration_id(
+                            statement.span
+                        )
+                        == symbol
+                    )
+                )
+            ),
+            None,
+        )
+
+    if declaration is None:
+        matches = [
             statement
-            for statement in workspace.program.statements
+            for _module_path, program in workspace.programs
+            for statement in program.statements
             if (
                 isinstance(
                     statement,
@@ -228,11 +309,10 @@ def _workspace_signature(
                 )
                 and statement.name == name
             )
-        ),
-        None,
-    )
-    if declaration is None:
-        return None
+        ]
+        if len(matches) != 1:
+            return None
+        declaration = matches[0]
 
     parameter_types = (
         declaration.parameter_types

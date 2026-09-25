@@ -118,7 +118,7 @@ def _program_for_compilation(
     """Load one source program, resolving file imports when available."""
     if source == "-":
         text, file = _read_source(source)
-        return parse(text, file=file), file, ()
+        return parse(text, file=file), file, (), None
 
     loaded = load_program_file(
         Path(source),
@@ -127,15 +127,22 @@ def _program_for_compilation(
         loaded.program,
         str(loaded.entry),
         tuple(str(path) for path in loaded.modules),
+        loaded.function_scope,
     )
 
 
 def _compile_source(source: str):
     """Parse, resolve modules, and compile one source input."""
-    program, _file, _modules = _program_for_compilation(
-        source
+    (
+        program,
+        _file,
+        _modules,
+        function_scope,
+    ) = _program_for_compilation(source)
+    result = compile_program(
+        program,
+        function_scope=function_scope,
     )
-    result = compile_program(program)
     if result.graph is None or result.diagnostics:
         _print_diagnostics(result)
         return None
@@ -281,10 +288,18 @@ def command_inspect(args: argparse.Namespace) -> int:
     text, file = _read_source(args.source)
     tokens = Lexer(text, file=file).tokenize()
     source_program = parse(text, file=file)
-    program, resolved_file, modules = _program_for_compilation(
+    (
+        program,
+        resolved_file,
+        modules,
+        function_scope,
+    ) = _program_for_compilation(
         args.source
     )
-    result = compile_program(program)
+    result = compile_program(
+        program,
+        function_scope=function_scope,
+    )
     _print_json(
         {
             "version": __version__,
@@ -600,10 +615,18 @@ def _render_mission_control(
 
 def command_mission(args: argparse.Namespace) -> int:
     """Execute a mission and render the Ghost Five operator view."""
-    program, file, _modules = _program_for_compilation(
+    (
+        program,
+        file,
+        _modules,
+        function_scope,
+    ) = _program_for_compilation(
         args.source
     )
-    compiled = compile_program(program)
+    compiled = compile_program(
+        program,
+        function_scope=function_scope,
+    )
 
     if compiled.graph is None or compiled.diagnostics:
         _print_diagnostics(compiled)
@@ -888,10 +911,18 @@ def command_verify(args: argparse.Namespace) -> int:
     first_summary: dict[str, object] | None = None
 
     for _ in range(args.runs):
-        program, _file, _modules = _program_for_compilation(
+        (
+            program,
+            _file,
+            _modules,
+            function_scope,
+        ) = _program_for_compilation(
             args.source
         )
-        compiled = compile_program(program)
+        compiled = compile_program(
+            program,
+            function_scope=function_scope,
+        )
         if compiled.graph is None or compiled.diagnostics:
             _print_diagnostics(compiled)
             return 1
@@ -1002,10 +1033,18 @@ def command_limits(args: argparse.Namespace) -> int:
 
 def command_timeline(args: argparse.Namespace) -> int:
     """Execute a mission and print runtime state grouped by graph level."""
-    program, file, _modules = _program_for_compilation(
+    (
+        program,
+        file,
+        _modules,
+        function_scope,
+    ) = _program_for_compilation(
         args.source
     )
-    compiled = compile_program(program)
+    compiled = compile_program(
+        program,
+        function_scope=function_scope,
+    )
 
     if compiled.graph is None or compiled.diagnostics:
         _print_diagnostics(compiled)
@@ -1037,10 +1076,18 @@ def command_timeline(args: argparse.Namespace) -> int:
 
 def command_report(args: argparse.Namespace) -> int:
     """Execute a mission and write a standalone HTML execution report."""
-    program, file, _modules = _program_for_compilation(
+    (
+        program,
+        file,
+        _modules,
+        function_scope,
+    ) = _program_for_compilation(
         args.source
     )
-    compiled = compile_program(program)
+    compiled = compile_program(
+        program,
+        function_scope=function_scope,
+    )
 
     if compiled.graph is None or compiled.diagnostics:
         _print_diagnostics(compiled)

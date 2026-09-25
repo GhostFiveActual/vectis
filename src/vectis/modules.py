@@ -21,6 +21,12 @@ from vectis.diagnostic import (
     DiagnosticError,
     error_diagnostic,
 )
+from vectis.evaluator import BUILTINS
+from vectis.function_identity import (
+    FunctionSelectorBinding,
+    ModuleFunctionId,
+    ModuleFunctionScope,
+)
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
 
@@ -51,6 +57,7 @@ class ModuleLoadResult:
     entry: Path
     root: Path
     modules: tuple[Path, ...]
+    function_scope: ModuleFunctionScope
 
 
 def _inside_root(path: Path, root: Path) -> bool:
@@ -85,7 +92,7 @@ def _walk_nodes(value: object):
             yield from _walk_nodes(item)
 
 
-def validate_module_function_visibility(
+def resolve_module_function_scope(
     programs: Mapping[Path, Program],
     *,
     root: Path,
@@ -93,32 +100,73 @@ def validate_module_function_visibility(
         Path,
         tuple[tuple[ImportStatement, Path], ...],
     ] | None = None,
-) -> None:
-    """Reject private or unselected cross-module function calls."""
+) -> ModuleFunctionScope:
+    """Resolve durable function identity across one loaded module graph."""
     resolved_imports = imports_by_path or {}
-    declarations: dict[
-        str,
-        list[tuple[Path, FunctionDeclaration]],
-    ] = {}
     direct: dict[
         Path,
-        dict[str, FunctionDeclaration],
+        dict[
+            str,
+            tuple[FunctionDeclaration, ModuleFunctionId],
+        ],
     ] = {}
-    local_names: dict[Path, set[str]] = {}
+    declarations_by_name: dict[
+        str,
+        list[
+            tuple[
+                Path,
+                FunctionDeclaration,
+                ModuleFunctionId,
+            ]
+        ],
+    ] = {}
+    declaration_bindings: list[
+        tuple[SourceSpan, ModuleFunctionId]
+    ] = []
+
+    def identity(
+        module_path: Path,
+        name: str,
+    ) -> ModuleFunctionId:
+        return ModuleFunctionId(
+            module=module_path.relative_to(root).as_posix(),
+            name=name,
+        )
 
     for module_path, program in programs.items():
-        names: set[str] = set()
-        module_declarations: dict[str, FunctionDeclaration] = {}
+        module_declarations: dict[
+            str,
+            tuple[FunctionDeclaration, ModuleFunctionId],
+        ] = {}
         for statement in program.statements:
             if not isinstance(statement, FunctionDeclaration):
                 continue
-            names.add(statement.name)
-            module_declarations[statement.name] = statement
-            declarations.setdefault(statement.name, []).append(
-                (module_path, statement)
+            function_id = identity(
+                module_path,
+                statement.name,
             )
-        local_names[module_path] = names
+            declaration_bindings.append(
+                (statement.span, function_id)
+            )
+            declarations_by_name.setdefault(
+                statement.name,
+                [],
+            ).append(
+                (
+                    module_path,
+                    statement,
+                    function_id,
+                )
+            )
+            module_declarations.setdefault(
+                statement.name,
+                (statement, function_id),
+            )
         direct[module_path] = module_declarations
+
+    selector_bindings: list[
+        FunctionSelectorBinding
+    ] = []
 
     for _importer, imports in resolved_imports.items():
         for statement, target_path in imports:
@@ -127,8 +175,8 @@ def validate_module_function_visibility(
             target_label = target_path.relative_to(root).as_posix()
             target_declarations = direct.get(target_path, {})
             for name in statement.names:
-                target = target_declarations.get(name)
-                if target is None:
+                target_pair = target_declarations.get(name)
+                if target_pair is None:
                     raise ModuleError(
                         (
                             f"function {name!r} is not declared by "
@@ -136,6 +184,7 @@ def validate_module_function_visibility(
                         ),
                         span=statement.span,
                     )
+                target, function_id = target_pair
                 if target.visibility == "private":
                     raise ModuleError(
                         (
@@ -144,22 +193,29 @@ def validate_module_function_visibility(
                         ),
                         span=statement.span,
                     )
+                selector_bindings.append(
+                    FunctionSelectorBinding(
+                        span=statement.span,
+                        name=name,
+                        target=function_id,
+                    )
+                )
 
     public_surface_cache: dict[
         Path,
-        frozenset[tuple[Path, str]],
+        frozenset[ModuleFunctionId],
     ] = {}
 
     def public_surface(
         module_path: Path,
-    ) -> frozenset[tuple[Path, str]]:
+    ) -> frozenset[ModuleFunctionId]:
         cached = public_surface_cache.get(module_path)
         if cached is not None:
             return cached
 
         seen: set[Path] = set()
         pending = [module_path]
-        result: set[tuple[Path, str]] = set()
+        result: set[ModuleFunctionId] = set()
 
         while pending:
             current = pending.pop()
@@ -167,9 +223,12 @@ def validate_module_function_visibility(
                 continue
             seen.add(current)
 
-            for name, declaration in direct.get(current, {}).items():
+            for declaration, function_id in direct.get(
+                current,
+                {},
+            ).values():
                 if declaration.visibility == "public":
-                    result.add((current, name))
+                    result.add(function_id)
 
             for _statement, target in resolved_imports.get(
                 current,
@@ -181,40 +240,105 @@ def validate_module_function_visibility(
         public_surface_cache[module_path] = frozen
         return frozen
 
+    public_by_name: dict[
+        str,
+        set[ModuleFunctionId],
+    ] = {}
+    for name, declarations in declarations_by_name.items():
+        for _path, declaration, function_id in declarations:
+            if declaration.visibility == "public":
+                public_by_name.setdefault(
+                    name,
+                    set(),
+                ).add(function_id)
+
+    call_bindings: list[
+        tuple[SourceSpan, ModuleFunctionId]
+    ] = []
+
     for module_path, program in programs.items():
-        local = local_names[module_path]
+        local = direct.get(module_path, {})
         imports = resolved_imports.get(module_path, ())
         selective_mode = any(
             statement.names is not None
             for statement, _target in imports
         )
-        allowed: set[tuple[Path, str]] = set()
+        allowed: set[ModuleFunctionId] = set()
 
         if selective_mode:
             for statement, target_path in imports:
                 if statement.names is None:
-                    allowed.update(public_surface(target_path))
-                else:
                     allowed.update(
-                        (target_path, name)
-                        for name in statement.names
+                        public_surface(target_path)
                     )
+                else:
+                    for name in statement.names:
+                        pair = direct.get(
+                            target_path,
+                            {},
+                        ).get(name)
+                        if pair is not None:
+                            allowed.add(pair[1])
 
         for node in _walk_nodes(program):
             if not isinstance(node, CallExpression):
                 continue
-            if node.name in local:
+            if node.name in BUILTINS:
                 continue
 
-            targets = declarations.get(node.name, ())
+            local_pair = local.get(node.name)
+            if local_pair is not None:
+                call_bindings.append(
+                    (node.span, local_pair[1])
+                )
+                continue
+
+            if selective_mode:
+                candidates = sorted(
+                    function_id
+                    for function_id in allowed
+                    if function_id.name == node.name
+                )
+            else:
+                candidates = sorted(
+                    public_by_name.get(
+                        node.name,
+                        set(),
+                    )
+                )
+
+            if len(candidates) == 1:
+                call_bindings.append(
+                    (node.span, candidates[0])
+                )
+                continue
+
+            if len(candidates) > 1:
+                importer = module_path.relative_to(root).as_posix()
+                rendered = ", ".join(
+                    item.label
+                    for item in candidates
+                )
+                raise ModuleError(
+                    (
+                        f"function {node.name!r} is ambiguous in "
+                        f"module {importer}; candidates: {rendered}"
+                    ),
+                    span=node.span,
+                )
+
+            targets = declarations_by_name.get(
+                node.name,
+                (),
+            )
             if len(targets) != 1:
                 continue
 
-            target_path, target = targets[0]
-            if target_path == module_path:
-                continue
-
-            if target.visibility == "private":
+            target_path, target, function_id = targets[0]
+            if (
+                target_path != module_path
+                and target.visibility == "private"
+            ):
                 owner = target_path.relative_to(root).as_posix()
                 raise ModuleError(
                     (
@@ -226,7 +350,7 @@ def validate_module_function_visibility(
 
             if (
                 selective_mode
-                and (target_path, node.name) not in allowed
+                and function_id not in allowed
             ):
                 importer = module_path.relative_to(root).as_posix()
                 raise ModuleError(
@@ -236,6 +360,29 @@ def validate_module_function_visibility(
                     ),
                     span=node.span,
                 )
+
+    return ModuleFunctionScope(
+        declarations=tuple(declaration_bindings),
+        calls=tuple(call_bindings),
+        selectors=tuple(selector_bindings),
+    )
+
+
+def validate_module_function_visibility(
+    programs: Mapping[Path, Program],
+    *,
+    root: Path,
+    imports_by_path: Mapping[
+        Path,
+        tuple[tuple[ImportStatement, Path], ...],
+    ] | None = None,
+) -> None:
+    """Reject inaccessible or ambiguous cross-module function calls."""
+    resolve_module_function_scope(
+        programs,
+        root=root,
+        imports_by_path=imports_by_path,
+    )
 
 
 def load_program_file(
@@ -419,7 +566,7 @@ def load_program_file(
     if entry_program is None:
         raise RuntimeError("module loader did not produce an entry program")
 
-    validate_module_function_visibility(
+    function_scope = resolve_module_function_scope(
         program_by_path,
         root=project_root,
         imports_by_path=resolved_imports,
@@ -441,4 +588,5 @@ def load_program_file(
         entry=entry,
         root=project_root,
         modules=tuple(ordered_modules),
+        function_scope=function_scope,
     )

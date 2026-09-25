@@ -25,6 +25,10 @@ from vectis.ast import (
 )
 from vectis.diagnostic import DiagnosticError
 from vectis.evaluator import BUILTINS
+from vectis.function_identity import (
+    ModuleFunctionId,
+    ModuleFunctionScope,
+)
 from vectis.lexer import KEYWORDS, Lexer
 from vectis.lsp_position import (
     contains_lsp_position,
@@ -33,7 +37,7 @@ from vectis.lsp_position import (
 from vectis.modules import (
     ModuleError,
     module_root_for,
-    validate_module_function_visibility,
+    resolve_module_function_scope,
 )
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
@@ -52,6 +56,7 @@ class WorkspaceProgram:
     modules: tuple[Path, ...]
     programs: tuple[tuple[Path, Program], ...]
     sources: tuple[tuple[Path, str], ...]
+    function_scope: ModuleFunctionScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +67,7 @@ class FunctionOccurrence:
     path: Path
     span: SourceSpan
     declaration: bool
+    symbol: ModuleFunctionId
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,7 +352,7 @@ def load_workspace_program(
             "workspace loader did not produce an entry program"
         )
 
-    validate_module_function_visibility(
+    function_scope = resolve_module_function_scope(
         program_by_path,
         root=project_root,
         imports_by_path=resolved_imports,
@@ -382,6 +388,7 @@ def load_workspace_program(
             )
             for module_path in ordered_modules
         ),
+        function_scope=function_scope,
     )
 
 
@@ -440,13 +447,13 @@ def function_definition(
     character: int,
 ) -> dict[str, object] | None:
     """Return the declaration location for the function under the cursor."""
-    name = _function_name_at(
+    symbol = _function_symbol_at(
         workspace,
         path=path,
         line=line,
         character=character,
     )
-    if name is None:
+    if symbol is None:
         return None
 
     declaration = next(
@@ -456,7 +463,7 @@ def function_definition(
                 workspace
             )
             if (
-                item.name == name
+                item.symbol == symbol
                 and item.declaration
             )
         ),
@@ -476,13 +483,13 @@ def function_references(
     include_declaration: bool,
 ) -> list[dict[str, object]]:
     """Return deterministic reachable references for one user function."""
-    name = _function_name_at(
+    symbol = _function_symbol_at(
         workspace,
         path=path,
         line=line,
         character=character,
     )
-    if name is None:
+    if symbol is None:
         return []
 
     return [
@@ -491,7 +498,7 @@ def function_references(
             workspace
         )
         if (
-            item.name == name
+            item.symbol == symbol
             and (
                 include_declaration
                 or not item.declaration
@@ -514,13 +521,13 @@ def function_rename(
             "new function name must be an unused VECTIS identifier"
         )
 
-    name = _function_name_at(
+    symbol = _function_symbol_at(
         workspace,
         path=path,
         line=line,
         character=character,
     )
-    if name is None:
+    if symbol is None:
         return None
 
     occurrences = [
@@ -528,7 +535,7 @@ def function_rename(
         for item in function_occurrences(
             workspace
         )
-        if item.name == name
+        if item.symbol == symbol
     ]
     if not occurrences:
         return None
@@ -538,16 +545,19 @@ def function_rename(
         for item in function_occurrences(
             workspace
         )
-        if item.declaration
+        if (
+            item.declaration
+            and item.symbol.module == symbol.module
+        )
     }
     if (
-        new_name != name
+        new_name != symbol.name
         and new_name in existing
     ):
         raise ValueError(
             (
                 "new function name conflicts with an "
-                "existing user function"
+                "existing user function in the same module"
             )
         )
 
@@ -610,6 +620,14 @@ def function_occurrences(
             if isinstance(node, ImportStatement):
                 if node.names is not None:
                     for name in node.names:
+                        symbol = (
+                            workspace.function_scope.selector_target(
+                                node.span,
+                                name,
+                            )
+                        )
+                        if symbol is None:
+                            continue
                         span = _identifier_span(
                             tokens,
                             node.span,
@@ -622,6 +640,7 @@ def function_occurrences(
                                     path=path,
                                     span=span,
                                     declaration=False,
+                                    symbol=symbol,
                                 )
                             )
                 continue
@@ -630,6 +649,13 @@ def function_occurrences(
                 node,
                 FunctionDeclaration,
             ):
+                symbol = (
+                    workspace.function_scope.declaration_id(
+                        node.span
+                    )
+                )
+                if symbol is None:
+                    continue
                 span = _identifier_span(
                     tokens,
                     node.span,
@@ -642,6 +668,7 @@ def function_occurrences(
                             path=path,
                             span=span,
                             declaration=True,
+                            symbol=symbol,
                         )
                     )
                 continue
@@ -651,6 +678,13 @@ def function_occurrences(
                 CallExpression,
             ):
                 if node.name in BUILTINS:
+                    continue
+                symbol = (
+                    workspace.function_scope.call_target(
+                        node.span
+                    )
+                )
+                if symbol is None:
                     continue
                 span = _identifier_span(
                     tokens,
@@ -664,11 +698,14 @@ def function_occurrences(
                             path=path,
                             span=span,
                             declaration=False,
+                            symbol=symbol,
                         )
                     )
 
     unique = {
         (
+            item.symbol.module,
+            item.symbol.name,
             item.name,
             str(item.path),
             item.span.start.line,
@@ -693,7 +730,6 @@ def function_occurrences(
     )
 
 
-
 def symbol_definition(
     workspace: WorkspaceProgram,
     *,
@@ -702,7 +738,7 @@ def symbol_definition(
     character: int,
 ) -> dict[str, object] | None:
     """Return the definition for the supported symbol under the cursor."""
-    if _function_name_at(
+    if _function_symbol_at(
         workspace,
         path=path,
         line=line,
@@ -731,7 +767,7 @@ def symbol_references(
     include_declaration: bool,
 ) -> list[dict[str, object]]:
     """Return references for the supported symbol under the cursor."""
-    if _function_name_at(
+    if _function_symbol_at(
         workspace,
         path=path,
         line=line,
@@ -762,7 +798,7 @@ def symbol_rename(
     new_name: str,
 ) -> dict[str, object] | None:
     """Return a WorkspaceEdit for the supported symbol under the cursor."""
-    if _function_name_at(
+    if _function_symbol_at(
         workspace,
         path=path,
         line=line,
@@ -1025,13 +1061,13 @@ def _value_name_at(
             return item.name
     return None
 
-def _function_name_at(
+def _function_symbol_at(
     workspace: WorkspaceProgram,
     *,
     path: Path,
     line: int,
     character: int,
-) -> str | None:
+) -> ModuleFunctionId | None:
     canonical = path.expanduser().resolve()
     source_map = dict(workspace.sources)
     for item in function_occurrences(
@@ -1045,7 +1081,7 @@ def _function_name_at(
             line=line,
             character=character,
         ):
-            return item.name
+            return item.symbol
     return None
 
 

@@ -310,6 +310,9 @@ def browse_project_modules(
                 functions.append(
                     {
                         "name": statement.name,
+                        "identity": (
+                            f"{relative}::{statement.name}"
+                        ),
                         "visibility": statement.visibility,
                         "parameters": list(statement.parameters),
                         "parameter_types": list(parameter_types),
