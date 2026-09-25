@@ -37,6 +37,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 21. [RFC 0021: Deterministic built-in result contracts](0021-deterministic-builtin-result-contracts.md)
 22. [RFC 0022: Module function visibility](0022-module-function-visibility.md)
 23. [RFC 0023: Selective function imports](0023-selective-function-imports.md)
+24. [RFC 0024: Module-scoped function identity](0024-module-scoped-function-identity.md)
 
 ## When an RFC is required
 

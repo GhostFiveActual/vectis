@@ -151,20 +151,26 @@ class LanguageServer:
         file = uri
         try:
             path = _uri_path(uri)
+            function_scope = None
             if path is None:
                 program = parse(
                     source,
                     file=file,
                 )
             else:
-                program = load_workspace_program(
+                workspace = load_workspace_program(
                     path,
                     overlays=overlay_map(
                         self.documents
                     ),
-                ).program
+                )
+                program = workspace.program
+                function_scope = workspace.function_scope
 
-            result = compile_program(program)
+            result = compile_program(
+                program,
+                function_scope=function_scope,
+            )
             return [
                 _lsp_diagnostic(
                     diagnostic,
@@ -233,6 +239,7 @@ class LanguageServer:
         source = self.documents.get(uri)
         try:
             path = _uri_path(uri)
+            function_scope = None
             if path is None:
                 if source is None:
                     return {"ok": False, "diagnostics": []}
@@ -243,8 +250,12 @@ class LanguageServer:
                     documents=self.documents,
                 )
                 program = workspace.program
+                function_scope = workspace.function_scope
 
-            result = compile_program(program)
+            result = compile_program(
+                program,
+                function_scope=function_scope,
+            )
             if result.graph is None:
                 return {
                     "ok": False,
@@ -675,6 +686,11 @@ class LanguageServer:
                         line=line,
                         character=character,
                         workspace=workspace,
+                        path=(
+                            _uri_path(uri)
+                            if isinstance(uri, str)
+                            else None
+                        ),
                         supplemental_sources=(
                             self.documents[item]
                             for item in sorted(self.documents)

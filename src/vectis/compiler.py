@@ -38,6 +38,10 @@ from vectis.ast import (
 from vectis.diagnostic import Diagnostic
 from vectis.evaluator import EvaluationError, Value, evaluate_expression
 from vectis.formatter import format_expression
+from vectis.function_identity import (
+    ModuleFunctionId,
+    ModuleFunctionScope,
+)
 from vectis.ir import (
     EdgeKind,
     ExecutionGraph,
@@ -46,6 +50,9 @@ from vectis.ir import (
     NodeKind,
 )
 from vectis.semantic import analyze as analyze_semantics
+
+
+FunctionKey = str | ModuleFunctionId
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +80,15 @@ class CompilationError(ValueError):
         super().__init__(message)
 
 
-def _semantic_diagnostics(program: Program) -> tuple[Diagnostic, ...]:
-    result = analyze_semantics(program)
+def _semantic_diagnostics(
+    program: Program,
+    *,
+    function_scope: ModuleFunctionScope | None = None,
+) -> tuple[Diagnostic, ...]:
+    result = analyze_semantics(
+        program,
+        function_scope=function_scope,
+    )
     if result is None:
         return ()
     if isinstance(result, (list, tuple)):
@@ -127,9 +141,12 @@ def _reference_names(expression: Expression) -> tuple[str, ...]:
 class _GraphBuilder:
     def __init__(
         self,
-        functions: dict[str, FunctionDeclaration],
+        functions: dict[FunctionKey, FunctionDeclaration],
+        *,
+        function_scope: ModuleFunctionScope | None = None,
     ) -> None:
         self.functions = dict(functions)
+        self.function_scope = function_scope
         self.nodes: list[GraphNode] = []
         self.edges: list[GraphEdge] = []
         self.node_ids: set[str] = set()
@@ -137,6 +154,18 @@ class _GraphBuilder:
         self.counters: dict[str, int] = {}
         self.known_values: dict[str, Value] = {}
         self.stage_stack: list[str] = []
+
+    def _call_key(
+        self,
+        expression: CallExpression,
+    ) -> FunctionKey:
+        if self.function_scope is not None:
+            identity = self.function_scope.call_target(
+                expression.span
+            )
+            if identity is not None:
+                return identity
+        return expression.name
 
     def build(self, program: Program) -> ExecutionGraph:
         for statement in program.statements:
@@ -265,7 +294,7 @@ class _GraphBuilder:
         self,
         expression: Expression,
         *,
-        stack: tuple[str, ...] = (),
+        stack: tuple[FunctionKey, ...] = (),
     ) -> Expression:
         if isinstance(expression, UnaryExpression):
             return replace(
@@ -348,9 +377,8 @@ class _GraphBuilder:
             )
             for argument in expression.arguments
         )
-        function = self.functions.get(
-            expression.name
-        )
+        key = self._call_key(expression)
+        function = self.functions.get(key)
 
         if function is None:
             return replace(
@@ -358,7 +386,7 @@ class _GraphBuilder:
                 arguments=arguments,
             )
 
-        if expression.name in stack:
+        if key in stack:
             raise ValueError(
                 "recursive function expansion reached compiler"
             )
@@ -376,7 +404,7 @@ class _GraphBuilder:
         )
         return self._expand_expression(
             substituted,
-            stack=(*stack, expression.name),
+            stack=(*stack, key),
         )
 
     def _add_expression_dependencies(
@@ -723,30 +751,56 @@ class _GraphBuilder:
         return (node_id,)
 
 
-def compile_program(program: Program) -> CompileResult:
+def compile_program(
+    program: Program,
+    *,
+    function_scope: ModuleFunctionScope | None = None,
+) -> CompileResult:
     if not isinstance(program, Program):
         raise TypeError("compile_program requires a Program")
 
-    diagnostics = _semantic_diagnostics(program)
+    diagnostics = _semantic_diagnostics(
+        program,
+        function_scope=function_scope,
+    )
     if diagnostics:
         return CompileResult(graph=None, diagnostics=diagnostics)
 
-    functions = {
-        statement.name: statement
-        for statement in program.statements
-        if isinstance(
+    functions: dict[
+        FunctionKey,
+        FunctionDeclaration,
+    ] = {}
+    for statement in program.statements:
+        if not isinstance(
             statement,
             FunctionDeclaration,
-        )
-    }
+        ):
+            continue
+        key: FunctionKey = statement.name
+        if function_scope is not None:
+            identity = function_scope.declaration_id(
+                statement.span
+            )
+            if identity is not None:
+                key = identity
+        functions[key] = statement
+
     graph = _GraphBuilder(
-        functions
+        functions,
+        function_scope=function_scope,
     ).build(program)
     return CompileResult(graph=graph, diagnostics=())
 
 
-def compile_ast_to_execution_graph(program: Program) -> ExecutionGraph:
-    result = compile_program(program)
+def compile_ast_to_execution_graph(
+    program: Program,
+    *,
+    function_scope: ModuleFunctionScope | None = None,
+) -> ExecutionGraph:
+    result = compile_program(
+        program,
+        function_scope=function_scope,
+    )
     if not result.ok or result.graph is None:
         raise CompilationError(result.diagnostics)
     return result.graph

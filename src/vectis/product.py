@@ -568,7 +568,8 @@ def test_project(root: Path) -> dict[str, object]:
                 ),
             )
             result = compile_program(
-                loaded.program
+                loaded.program,
+                function_scope=loaded.function_scope,
             )
             ok = result.ok
             diagnostics = [

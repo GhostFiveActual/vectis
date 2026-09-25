@@ -74,6 +74,7 @@ class ModuleBrowserTests(unittest.TestCase):
                 library["functions"],
                 [{
                     "name": "clamp_score",
+                    "identity": "lib/math.vectis::clamp_score",
                     "visibility": "public",
                     "parameters": ["value", "minimum", "maximum"],
                     "parameter_types": [None, None, None],
@@ -103,6 +104,7 @@ class ModuleBrowserTests(unittest.TestCase):
                 function,
                 {
                     "name": "ready",
+                    "identity": "lib/gate.vectis::ready",
                     "visibility": "public",
                     "parameters": ["value"],
                     "parameter_types": ["number"],
