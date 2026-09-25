@@ -87,6 +87,51 @@ def module_root_for(path: Path) -> Path:
     return source.parent if source.suffix else source
 
 
+def validate_package_composition(
+    programs: Mapping[Path, Program],
+    *,
+    root: Path,
+    imports_by_path: Mapping[
+        Path,
+        tuple[tuple[ImportStatement, Path], ...],
+    ],
+    manifest: PackageManifest,
+) -> None:
+    """Enforce direct package dependency contracts for loaded package closures."""
+    for declaration in manifest.packages:
+        entry_path = package_entry_path(
+            root,
+            declaration,
+        )
+        if entry_path not in programs:
+            continue
+
+        seen: set[Path] = set()
+        pending = [entry_path]
+        while pending:
+            module_path = pending.pop()
+            if module_path in seen:
+                continue
+            seen.add(module_path)
+
+            for statement, target_path in imports_by_path.get(
+                module_path,
+                (),
+            ):
+                if statement.package:
+                    if declaration.dependency(statement.path) is None:
+                        owner = declaration.name
+                        raise ModuleError(
+                            (
+                                f"package {owner!r} imports package "
+                                f"{statement.path!r} without a dependency contract"
+                            ),
+                            span=statement.span,
+                        )
+                    continue
+                pending.append(target_path)
+
+
 def _walk_nodes(value: object):
     if isinstance(value, Node):
         yield value
@@ -905,6 +950,14 @@ def load_program_file(
         ordered_modules.append(module_path)
 
     visit(entry, is_entry=True)
+
+    if package_manifest_loaded and package_manifest is not None:
+        validate_package_composition(
+            program_by_path,
+            root=project_root,
+            imports_by_path=resolved_imports,
+            manifest=package_manifest,
+        )
 
     if entry_program is None:
         raise RuntimeError("module loader did not produce an entry program")

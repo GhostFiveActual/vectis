@@ -11,6 +11,9 @@ import tomllib
 
 
 _PACKAGE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PACKAGE_VERSION = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+)
 
 
 class PackageManifestError(ValueError):
@@ -19,10 +22,12 @@ class PackageManifestError(ValueError):
 
 @dataclass(frozen=True, slots=True, order=True)
 class PackageDeclaration:
-    """One project-local package entry point."""
+    """One project-local package entry point and composition contract."""
 
     name: str
     entry: str
+    version: str | None = None
+    dependencies: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not _PACKAGE_NAME.fullmatch(self.name):
@@ -33,6 +38,31 @@ class PackageDeclaration:
             )
         if not isinstance(self.entry, str) or not self.entry:
             raise ValueError("PackageDeclaration.entry must not be empty")
+        if self.version is not None and (
+            not isinstance(self.version, str)
+            or not _PACKAGE_VERSION.fullmatch(self.version)
+        ):
+            raise ValueError(
+                "PackageDeclaration.version must use MAJOR.MINOR.PATCH"
+            )
+        if not isinstance(self.dependencies, tuple):
+            raise TypeError("PackageDeclaration.dependencies must be tuple")
+        for dependency in self.dependencies:
+            if (
+                not isinstance(dependency, tuple)
+                or len(dependency) != 2
+                or not all(isinstance(item, str) for item in dependency)
+            ):
+                raise TypeError(
+                    "PackageDeclaration.dependencies must contain name/version pairs"
+                )
+
+    def dependency(self, name: str) -> str | None:
+        """Return the exact required version for one direct dependency."""
+        for dependency_name, version in self.dependencies:
+            if dependency_name == name:
+                return version
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +115,104 @@ def _validate_entry(name: str, entry: object) -> str:
             f"package {name!r} entry must reference a .vectis source file"
         )
     return relative.as_posix()
+
+
+def _validate_version(label: str, value: object) -> str:
+    if not isinstance(value, str) or not _PACKAGE_VERSION.fullmatch(value):
+        raise PackageManifestError(
+            f"{label} version must use MAJOR.MINOR.PATCH"
+        )
+    return value
+
+
+def _validate_dependencies(
+    package_name: str,
+    value: object,
+) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, dict):
+        raise PackageManifestError(
+            f"package {package_name!r} dependencies must be a table"
+        )
+
+    dependencies: list[tuple[str, str]] = []
+    for dependency_name in sorted(value):
+        if (
+            not isinstance(dependency_name, str)
+            or not _PACKAGE_NAME.fullmatch(dependency_name)
+            or dependency_name in {"true", "false"}
+        ):
+            raise PackageManifestError(
+                f"package {package_name!r} dependency name "
+                f"{dependency_name!r} must be a VECTIS identifier"
+            )
+        required_version = _validate_version(
+            f"package {package_name!r} dependency {dependency_name!r}",
+            value[dependency_name],
+        )
+        dependencies.append(
+            (dependency_name, required_version)
+        )
+    return tuple(dependencies)
+
+
+def _validate_dependency_graph(
+    declarations: tuple[PackageDeclaration, ...],
+) -> None:
+    by_name = {
+        declaration.name: declaration
+        for declaration in declarations
+    }
+
+    for declaration in declarations:
+        for dependency_name, required_version in declaration.dependencies:
+            if dependency_name == declaration.name:
+                raise PackageManifestError(
+                    f"package {declaration.name!r} cannot depend on itself"
+                )
+            target = by_name.get(dependency_name)
+            if target is None:
+                raise PackageManifestError(
+                    f"package {declaration.name!r} dependency "
+                    f"{dependency_name!r} is not declared"
+                )
+            if target.version is None:
+                raise PackageManifestError(
+                    f"package {declaration.name!r} dependency "
+                    f"{dependency_name!r} requires version {required_version!r}, "
+                    f"but package {dependency_name!r} has no version"
+                )
+            if target.version != required_version:
+                raise PackageManifestError(
+                    f"package {declaration.name!r} dependency "
+                    f"{dependency_name!r} requires version {required_version!r}, "
+                    f"found {target.version!r}"
+                )
+
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(name: str) -> None:
+        state[name] = 1
+        stack.append(name)
+        declaration = by_name[name]
+        for dependency_name, _version in declaration.dependencies:
+            dependency_state = state.get(dependency_name, 0)
+            if dependency_state == 0:
+                visit(dependency_name)
+                continue
+            if dependency_state == 1:
+                start = stack.index(dependency_name)
+                cycle = [*stack[start:], dependency_name]
+                raise PackageManifestError(
+                    "package dependency cycle is not allowed: "
+                    + " -> ".join(cycle)
+                )
+        stack.pop()
+        state[name] = 2
+
+    for name in sorted(by_name):
+        if state.get(name, 0) == 0:
+            visit(name)
 
 
 def package_entry_path(
@@ -150,20 +278,41 @@ def load_package_manifest(
         specification = raw_packages[name]
         if not isinstance(specification, dict):
             raise PackageManifestError(
-                f"package {name!r} must be a table with one entry field"
+                f"package {name!r} must be a table"
             )
-        if set(specification) != {"entry"}:
+        supported = {"entry", "version", "dependencies"}
+        unsupported = sorted(set(specification) - supported)
+        if unsupported:
             raise PackageManifestError(
-                f"package {name!r} must define exactly the entry field"
+                f"package {name!r} has unsupported fields: "
+                + ", ".join(unsupported)
+            )
+        if "entry" not in specification:
+            raise PackageManifestError(
+                f"package {name!r} must define the entry field"
             )
 
         entry = _validate_entry(
             name,
             specification["entry"],
         )
+        version = (
+            None
+            if "version" not in specification
+            else _validate_version(
+                f"package {name!r}",
+                specification["version"],
+            )
+        )
+        dependencies = _validate_dependencies(
+            name,
+            specification.get("dependencies", {}),
+        )
         declaration = PackageDeclaration(
             name=name,
             entry=entry,
+            version=version,
+            dependencies=dependencies,
         )
         package_entry_path(
             project_root,
@@ -171,9 +320,11 @@ def load_package_manifest(
         )
         declarations.append(declaration)
 
-    return PackageManifest(
+    manifest = PackageManifest(
         packages=tuple(declarations),
     )
+    _validate_dependency_graph(manifest.packages)
+    return manifest
 
 
 __all__ = [

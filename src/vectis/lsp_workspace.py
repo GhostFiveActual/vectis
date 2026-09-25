@@ -39,6 +39,7 @@ from vectis.modules import (
     ModuleError,
     module_root_for,
     resolve_module_function_scope,
+    validate_package_composition,
 )
 from vectis.package_manifest import (
     PackageManifest,
@@ -423,6 +424,14 @@ def load_workspace_program(
         )
 
     visit(entry, is_entry=True)
+
+    if package_manifest_loaded and package_manifest is not None:
+        validate_package_composition(
+            program_by_path,
+            root=project_root,
+            imports_by_path=resolved_imports,
+            manifest=package_manifest,
+        )
 
     if entry_program is None:
         raise RuntimeError(
