@@ -165,6 +165,8 @@ class _GraphBuilder:
             )
             if identity is not None:
                 return identity
+        if expression.qualifier is not None:
+            return f"{expression.qualifier}.{expression.name}"
         return expression.name
 
     def build(self, program: Program) -> ExecutionGraph:

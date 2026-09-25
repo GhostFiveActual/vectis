@@ -141,10 +141,20 @@ class CallExpression(Expression):
 
     name: str
     arguments: tuple[Expression, ...] = ()
+    qualifier: str | None = None
 
     def __post_init__(self) -> None:
         Node.__post_init__(self)
         _require_name(self.name, "CallExpression.name")
+        if self.qualifier is not None:
+            _require_name(
+                self.qualifier,
+                "CallExpression.qualifier",
+            )
+            if self.qualifier in {"true", "false"}:
+                raise ValueError(
+                    "CallExpression.qualifier cannot be a boolean literal name"
+                )
         if not isinstance(self.arguments, tuple):
             raise TypeError("CallExpression.arguments must be tuple")
         if not all(isinstance(item, Expression) for item in self.arguments):
@@ -205,6 +215,7 @@ class ImportStatement(Statement):
 
     path: str
     names: tuple[str, ...] | None = None
+    alias: str | None = None
 
     def __post_init__(self) -> None:
         Node.__post_init__(self)
@@ -212,6 +223,15 @@ class ImportStatement(Statement):
             raise ValueError(
                 "ImportStatement.path must be a non-empty string"
             )
+        if self.alias is not None:
+            _require_name(
+                self.alias,
+                "ImportStatement.alias",
+            )
+            if self.alias in {"true", "false"}:
+                raise ValueError(
+                    "ImportStatement.alias cannot be a boolean literal name"
+                )
         if self.names is None:
             return
         if not isinstance(self.names, tuple):

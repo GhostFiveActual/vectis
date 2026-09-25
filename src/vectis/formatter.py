@@ -80,7 +80,12 @@ def format_expression(expression: Expression) -> str:
         arguments = ", ".join(
             format_expression(item) for item in expression.arguments
         )
-        return f"{expression.name}({arguments})"
+        target = (
+            expression.name
+            if expression.qualifier is None
+            else f"{expression.qualifier}.{expression.name}"
+        )
+        return f"{target}({arguments})"
     if isinstance(expression, UnaryExpression):
         return f"{expression.operator}{format_expression(expression.operand)}"
     if isinstance(expression, BinaryExpression):
@@ -107,10 +112,15 @@ def _format_statement(statement: Statement, level: int) -> list[str]:
         selected = ""
         if statement.names is not None:
             selected = " {" + ", ".join(statement.names) + "}"
+        alias = (
+            ""
+            if statement.alias is None
+            else f" as {statement.alias}"
+        )
         return [
             f"{indent}import "
             f"{json.dumps(statement.path, ensure_ascii=False)}"
-            f"{selected};"
+            f"{selected}{alias};"
         ]
     if isinstance(statement, FunctionDeclaration):
         visibility = (
