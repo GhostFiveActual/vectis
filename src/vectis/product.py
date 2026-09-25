@@ -500,6 +500,9 @@ def initialize_project(root: Path, *, force: bool = False) -> tuple[Path, ...]:
             "[project]\n"
             'name = "vectis-project"\n'
             'mission_root = "missions"\n'
+            "\n"
+            "[packages.readiness]\n"
+            'entry = "lib/readiness.vectis"\n'
         ),
         root / "actions.example.toml": (
             "# GHOST FIVE // VECTIS\n"
@@ -517,11 +520,11 @@ def initialize_project(root: Path, *, force: bool = False) -> tuple[Path, ...]:
         root / "missions" / "main.vectis": (
             "// GHOST FIVE // VECTIS\n"
             "// Primary mission created by vectis init.\n"
-            'import "../lib/readiness.vectis";\n'
+            'import package "readiness";\n'
             "\n"
             'mission "Primary mission" {\n'
             "    source ready true;\n"
-            "    let status readiness_status(ready);\n"
+            "    let status readiness.readiness_status(ready);\n"
             "\n"
             "    when ready {\n"
             "        publish status;\n"

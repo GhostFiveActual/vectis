@@ -51,7 +51,10 @@ _TEMPLATES = (
                 "# Project metadata for the starter template.\n"
                 "[project]\n"
                 'name = "vectis-starter"\n'
-                'mission_root = "missions"\n',
+                'mission_root = "missions"\n'
+                "\n"
+                "[packages.readiness]\n"
+                'entry = "lib/readiness.vectis"\n',
             ),
             (
                 "actions.example.toml",
@@ -72,11 +75,11 @@ _TEMPLATES = (
                 "missions/main.vectis",
                 "// GHOST FIVE // VECTIS\n"
                 "// Starter mission.\n"
-                'import "../lib/readiness.vectis";\n'
+                'import package "readiness";\n'
                 "\n"
                 'mission "Starter mission" {\n'
                 "    source ready true;\n"
-                "    let status readiness_status(ready);\n"
+                "    let status readiness.readiness_status(ready);\n"
                 "    publish status;\n"
                 "}\n",
             ),

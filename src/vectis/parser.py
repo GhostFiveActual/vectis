@@ -184,10 +184,38 @@ class Parser:
 
     def _parse_import(self) -> ImportStatement:
         start = self._expect("keyword", "import")
+        package_import = (
+            self._match("identifier", "package") is not None
+        )
         path = self._expect(
             "string",
-            description="module path string",
+            description=(
+                "package name string"
+                if package_import
+                else "module path string"
+            ),
         )
+        if package_import:
+            package_name = path.value
+            valid_package_name = (
+                bool(package_name)
+                and (
+                    package_name[0].isalpha()
+                    or package_name[0] == "_"
+                )
+                and all(
+                    character.isalnum() or character == "_"
+                    for character in package_name[1:]
+                )
+                and package_name not in {"true", "false"}
+            )
+            if not valid_package_name:
+                self._error(
+                    "package name must be a VECTIS identifier",
+                    token=path,
+                    code=DiagnosticCode.SYN_EXPECTED_TOKEN,
+                )
+
         names: tuple[str, ...] | None = None
         alias: str | None = None
 
@@ -234,7 +262,9 @@ class Parser:
             path=path.value,
             names=names,
             alias=alias,
+            package=package_import,
         )
+
 
     def _parse_type_annotation(self, *, description: str) -> str:
         name = self._expect(

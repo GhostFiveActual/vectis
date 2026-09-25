@@ -77,6 +77,7 @@ def semantic_tokens(
         namespace_keywords,
         namespace_declarations,
     ) = _namespace_context(tokens)
+    package_import_keywords = _package_import_context(tokens)
     lines = source.split("\n")
     encoded: list[int] = []
     previous_line = 0
@@ -96,6 +97,7 @@ def semantic_tokens(
             import_alias_declarations=import_alias_declarations,
             namespace_keywords=namespace_keywords,
             namespace_declarations=namespace_declarations,
+            package_import_keywords=package_import_keywords,
             regions=regions,
         )
         if classification is None:
@@ -150,6 +152,7 @@ def _classification(
     import_alias_declarations: frozenset[int],
     namespace_keywords: frozenset[int],
     namespace_declarations: frozenset[int],
+    package_import_keywords: frozenset[int],
     regions: tuple[_FunctionRegion, ...],
 ) -> tuple[str, int] | None:
     token = tokens[index]
@@ -176,6 +179,9 @@ def _classification(
         return None
 
     if value in {"true", "false"}:
+        return ("keyword", 0)
+
+    if index in package_import_keywords:
         return ("keyword", 0)
 
     if index in import_alias_keywords:
@@ -421,6 +427,29 @@ def _consume_type_annotation(
 
     return cursor
 
+
+
+def _package_import_context(
+    tokens: list[object],
+) -> frozenset[int]:
+    """Return contextual package-keyword token indexes."""
+    result: set[int] = set()
+
+    for index in range(len(tokens) - 2):
+        token = tokens[index]
+        contextual = tokens[index + 1]
+        name = tokens[index + 2]
+        if not (
+            getattr(token, "type", None) == "keyword"
+            and getattr(token, "value", None) == "import"
+            and getattr(contextual, "type", None) == "identifier"
+            and getattr(contextual, "value", None) == "package"
+            and getattr(name, "type", None) == "string"
+        ):
+            continue
+        result.add(index + 1)
+
+    return frozenset(result)
 
 
 def _namespace_context(

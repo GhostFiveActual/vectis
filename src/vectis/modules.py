@@ -28,6 +28,12 @@ from vectis.function_identity import (
     ModuleFunctionId,
     ModuleFunctionScope,
 )
+from vectis.package_manifest import (
+    PackageManifest,
+    PackageManifestError,
+    load_package_manifest,
+    package_entry_path,
+)
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
 
@@ -279,7 +285,7 @@ def resolve_module_function_scope(
                 current,
                 (),
             ):
-                if statement.alias is None:
+                if statement.alias is None and not statement.package:
                     pending.append(target)
 
         frozen = frozenset(result)
@@ -303,6 +309,11 @@ def resolve_module_function_scope(
         for imports in resolved_imports.values()
         for statement, _target in imports
     )
+    graph_has_package = any(
+        statement.package
+        for imports in resolved_imports.values()
+        for statement, _target in imports
+    )
     graph_has_namespace = bool(namespace_by_path)
 
     call_bindings: list[
@@ -321,33 +332,31 @@ def resolve_module_function_scope(
                 SourceSpan,
             ],
         ] = {}
-        for statement, target_path in imports:
-            if statement.alias is not None:
-                selected = (
-                    None
-                    if statement.names is None
-                    else frozenset(statement.names)
-                )
-                qualifiers[statement.alias] = (
-                    target_path,
-                    "alias",
-                    selected,
-                    statement.span,
-                )
 
         for statement, target_path in imports:
-            if statement.alias is not None:
+            if statement.alias is None:
                 continue
-            declared = namespace_by_path.get(target_path)
-            if declared is None:
-                continue
-            namespace_name, _namespace_span = declared
             selected = (
                 None
                 if statement.names is None
                 else frozenset(statement.names)
             )
-            existing = qualifiers.get(namespace_name)
+            qualifiers[statement.alias] = (
+                target_path,
+                "alias",
+                selected,
+                statement.span,
+            )
+
+        def register_qualifier(
+            name: str,
+            *,
+            target_path: Path,
+            kind: str,
+            selected: frozenset[str] | None,
+            span: SourceSpan,
+        ) -> None:
+            existing = qualifiers.get(name)
             if existing is not None:
                 (
                     existing_target,
@@ -356,34 +365,65 @@ def resolve_module_function_scope(
                     existing_span,
                 ) = existing
                 if (
-                    existing_kind == "namespace"
+                    existing_kind == kind
                     and existing_target == target_path
+                    and kind in {"namespace", "package"}
                 ):
                     merged_selected = (
                         None
                         if existing_selected is None or selected is None
                         else existing_selected | selected
                     )
-                    qualifiers[namespace_name] = (
+                    qualifiers[name] = (
                         target_path,
-                        "namespace",
+                        kind,
                         merged_selected,
                         existing_span,
                     )
-                    continue
+                    return
                 importer = module_path.relative_to(root).as_posix()
                 raise ModuleError(
                     (
                         "duplicate module qualifier in module "
-                        f"{importer}: {namespace_name}"
+                        f"{importer}: {name}"
                     ),
+                    span=span,
+                )
+            qualifiers[name] = (
+                target_path,
+                kind,
+                selected,
+                span,
+            )
+
+        for statement, target_path in imports:
+            if statement.alias is not None:
+                continue
+            selected = (
+                None
+                if statement.names is None
+                else frozenset(statement.names)
+            )
+            if statement.package:
+                register_qualifier(
+                    statement.path,
+                    target_path=target_path,
+                    kind="package",
+                    selected=selected,
                     span=statement.span,
                 )
-            qualifiers[namespace_name] = (
-                target_path,
-                "namespace",
-                selected,
-                statement.span,
+                continue
+
+            declared = namespace_by_path.get(target_path)
+            if declared is None:
+                continue
+            namespace_name, _namespace_span = declared
+            register_qualifier(
+                namespace_name,
+                target_path=target_path,
+                kind="namespace",
+                selected=selected,
+                span=statement.span,
             )
 
         legacy_selective_mode = any(
@@ -392,13 +432,14 @@ def resolve_module_function_scope(
         )
         constrained_bare_mode = (
             graph_has_alias
+            or graph_has_package
             or legacy_selective_mode
         )
         allowed_bare: set[ModuleFunctionId] = set()
 
         if constrained_bare_mode:
             for statement, target_path in imports:
-                if statement.alias is not None:
+                if statement.alias is not None or statement.package:
                     continue
                 if statement.names is None:
                     allowed_bare.update(
@@ -421,7 +462,7 @@ def resolve_module_function_scope(
                 qualified_import = qualifiers.get(node.qualifier)
                 importer = module_path.relative_to(root).as_posix()
                 if qualified_import is None:
-                    if graph_has_namespace:
+                    if graph_has_namespace or graph_has_package:
                         message = (
                             f"unknown module qualifier {node.qualifier!r} "
                             f"in module {importer}"
@@ -448,16 +489,23 @@ def resolve_module_function_scope(
                     {},
                 ).get(node.name)
                 if pair is None:
-                    owner_kind = (
-                        "aliased"
-                        if qualifier_kind == "alias"
-                        else "namespaced"
-                    )
-                    raise ModuleError(
-                        (
+                    if qualifier_kind == "package":
+                        message = (
+                            f"function {node.name!r} is not exported by "
+                            f"package {node.qualifier!r}"
+                        )
+                    else:
+                        owner_kind = (
+                            "aliased"
+                            if qualifier_kind == "alias"
+                            else "namespaced"
+                        )
+                        message = (
                             f"function {node.name!r} is not declared by "
                             f"{owner_kind} module {target_label}"
-                        ),
+                        )
+                    raise ModuleError(
+                        message,
                         span=node.span,
                     )
 
@@ -475,11 +523,11 @@ def resolve_module_function_scope(
                     selected_names is not None
                     and node.name not in selected_names
                 ):
-                    qualifier_label = (
-                        "module alias"
-                        if qualifier_kind == "alias"
-                        else "module namespace"
-                    )
+                    qualifier_label = {
+                        "alias": "module alias",
+                        "namespace": "module namespace",
+                        "package": "package import",
+                    }[qualifier_kind]
                     raise ModuleError(
                         (
                             f"function {node.name!r} is not selected by "
@@ -566,6 +614,7 @@ def resolve_module_function_scope(
                 if (
                     legacy_selective_mode
                     and not graph_has_alias
+                    and not graph_has_package
                 ):
                     raise ModuleError(
                         (
@@ -637,10 +686,79 @@ def load_program_file(
     entry_executable: list[Statement] = []
     entry_program: Program | None = None
 
+    package_manifest: PackageManifest | None = None
+    package_manifest_loaded = False
+
+    def project_packages() -> PackageManifest:
+        nonlocal package_manifest
+        nonlocal package_manifest_loaded
+
+        if not package_manifest_loaded:
+            package_manifest = load_package_manifest(
+                project_root,
+                require=True,
+            )
+            package_manifest_loaded = True
+
+        if package_manifest is None:
+            raise RuntimeError(
+                "package manifest cache did not initialize"
+            )
+        return package_manifest
+
     def resolve_import(
         statement: ImportStatement,
         importer: Path,
     ) -> Path:
+        if statement.package:
+            try:
+                manifest = project_packages()
+            except PackageManifestError as exc:
+                raise ModuleError(
+                    str(exc),
+                    span=statement.span,
+                ) from exc
+
+            declaration = manifest.package(
+                statement.path
+            )
+            if declaration is None:
+                raise ModuleError(
+                    f"unknown package {statement.path!r}",
+                    span=statement.span,
+                )
+
+            try:
+                candidate = package_entry_path(
+                    project_root,
+                    declaration,
+                )
+            except PackageManifestError as exc:
+                raise ModuleError(
+                    str(exc),
+                    span=statement.span,
+                ) from exc
+
+            if not _inside_root(
+                candidate,
+                project_root,
+            ):
+                raise ModuleError(
+                    "package entry escapes the module root",
+                    span=statement.span,
+                )
+
+            if not candidate.is_file():
+                raise ModuleError(
+                    (
+                        "package entry does not exist: "
+                        f"{declaration.entry}"
+                    ),
+                    span=statement.span,
+                )
+
+            return candidate
+
         raw = Path(statement.path)
 
         if raw.is_absolute():
