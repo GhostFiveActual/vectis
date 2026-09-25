@@ -69,6 +69,10 @@ def semantic_tokens(
         regions,
     ) = _function_context(tokens)
     import_selectors = _import_selector_context(tokens)
+    (
+        import_alias_keywords,
+        import_alias_declarations,
+    ) = _import_alias_context(tokens)
     lines = source.split("\n")
     encoded: list[int] = []
     previous_line = 0
@@ -84,6 +88,8 @@ def semantic_tokens(
             ),
             type_annotations=type_annotations,
             import_selectors=import_selectors,
+            import_alias_keywords=import_alias_keywords,
+            import_alias_declarations=import_alias_declarations,
             regions=regions,
         )
         if classification is None:
@@ -134,6 +140,8 @@ def _classification(
     parameter_declarations: frozenset[int],
     type_annotations: frozenset[int],
     import_selectors: frozenset[int],
+    import_alias_keywords: frozenset[int],
+    import_alias_declarations: frozenset[int],
     regions: tuple[_FunctionRegion, ...],
 ) -> tuple[str, int] | None:
     token = tokens[index]
@@ -161,6 +169,15 @@ def _classification(
 
     if value in {"true", "false"}:
         return ("keyword", 0)
+
+    if index in import_alias_keywords:
+        return ("keyword", 0)
+
+    if index in import_alias_declarations:
+        return (
+            "variable",
+            _DECLARATION,
+        )
 
     if (
         value == "private"
@@ -215,6 +232,14 @@ def _classification(
         if index + 1 < len(tokens)
         else None
     )
+
+    if (
+        getattr(previous, "type", None) == "punctuation"
+        and getattr(previous, "value", None) == "."
+        and getattr(following, "type", None) == "punctuation"
+        and getattr(following, "value", None) == "("
+    ):
+        return ("function", 0)
 
     if (
         getattr(
@@ -379,6 +404,49 @@ def _consume_type_annotation(
 
     return cursor
 
+
+
+def _import_alias_context(
+    tokens: list[object],
+) -> tuple[frozenset[int], frozenset[int]]:
+    """Return contextual alias-keyword and alias-declaration token indexes."""
+    keywords: set[int] = set()
+    declarations: set[int] = set()
+    index = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+        if not (
+            getattr(token, "type", None) == "keyword"
+            and getattr(token, "value", None) == "import"
+        ):
+            index += 1
+            continue
+
+        cursor = index + 1
+        while cursor < len(tokens):
+            current = tokens[cursor]
+            current_type = getattr(current, "type", None)
+            current_value = getattr(current, "value", None)
+
+            if current_type == "punctuation" and current_value == ";":
+                break
+
+            if (
+                current_type == "identifier"
+                and current_value == "as"
+                and cursor + 1 < len(tokens)
+                and getattr(tokens[cursor + 1], "type", None) == "identifier"
+            ):
+                keywords.add(cursor)
+                declarations.add(cursor + 1)
+                break
+
+            cursor += 1
+
+        index = cursor + 1
+
+    return frozenset(keywords), frozenset(declarations)
 
 
 def _import_selector_context(

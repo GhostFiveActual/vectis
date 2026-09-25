@@ -167,6 +167,7 @@ class Parser:
             description="module path string",
         )
         names: tuple[str, ...] | None = None
+        alias: str | None = None
 
         if self._match("punctuation", "{") is not None:
             selected: list[str] = []
@@ -192,11 +193,25 @@ class Parser:
 
             names = tuple(selected)
 
+        if self._match("identifier", "as") is not None:
+            alias_token = self._expect(
+                "identifier",
+                description="module alias",
+            )
+            if alias_token.value in {"true", "false"}:
+                self._error(
+                    "module alias cannot use a boolean literal name",
+                    token=alias_token,
+                    code=DiagnosticCode.SYN_EXPECTED_TOKEN,
+                )
+            alias = alias_token.value
+
         end = self._expect("punctuation", ";")
         return ImportStatement(
             span=self._cover(start.span, end.span),
             path=path.value,
             names=names,
+            alias=alias,
         )
 
     def _parse_type_annotation(self, *, description: str) -> str:
@@ -606,6 +621,31 @@ class Parser:
 
             if token.value == "false":
                 return BooleanLiteral(span=token.span, value=False)
+
+            if (
+                self._check("punctuation", ".")
+                and self.index + 2 < len(self.tokens)
+                and self.tokens[self.index + 1].type == "identifier"
+                and self.tokens[self.index + 2].type == "punctuation"
+                and self.tokens[self.index + 2].value == "("
+            ):
+                self._advance()
+                function = self._advance()
+                self._advance()
+                arguments: list[Expression] = []
+
+                if not self._check("punctuation", ")"):
+                    arguments.append(self._parse_expression())
+                    while self._match("punctuation", ",") is not None:
+                        arguments.append(self._parse_expression())
+
+                closing = self._expect("punctuation", ")")
+                return CallExpression(
+                    span=self._cover(token.span, closing.span),
+                    name=function.value,
+                    arguments=tuple(arguments),
+                    qualifier=token.value,
+                )
 
             if self._match("punctuation", "(") is not None:
                 arguments: list[Expression] = []

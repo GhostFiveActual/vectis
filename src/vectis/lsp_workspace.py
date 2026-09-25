@@ -677,7 +677,7 @@ def function_occurrences(
                 node,
                 CallExpression,
             ):
-                if node.name in BUILTINS:
+                if node.name in BUILTINS and node.qualifier is None:
                     continue
                 symbol = (
                     workspace.function_scope.call_target(
@@ -686,10 +686,19 @@ def function_occurrences(
                 )
                 if symbol is None:
                     continue
-                span = _identifier_span(
-                    tokens,
-                    node.span,
-                    node.name,
+                span = (
+                    _qualified_call_name_span(
+                        tokens,
+                        node.span,
+                        qualifier=node.qualifier,
+                        name=node.name,
+                    )
+                    if node.qualifier is not None
+                    else _identifier_span(
+                        tokens,
+                        node.span,
+                        node.name,
+                    )
                 )
                 if span is not None:
                     result.append(
@@ -1082,6 +1091,42 @@ def _function_symbol_at(
             character=character,
         ):
             return item.symbol
+    return None
+
+
+def _qualified_call_name_span(
+    tokens: list[object],
+    outer: SourceSpan,
+    *,
+    qualifier: str,
+    name: str,
+) -> SourceSpan | None:
+    """Return the member token span for one qualified call."""
+    for index in range(len(tokens) - 3):
+        alias = tokens[index]
+        dot = tokens[index + 1]
+        member = tokens[index + 2]
+        opening = tokens[index + 3]
+        if not (
+            getattr(alias, "type", None) == "identifier"
+            and getattr(alias, "value", None) == qualifier
+            and getattr(dot, "type", None) == "punctuation"
+            and getattr(dot, "value", None) == "."
+            and getattr(member, "type", None) == "identifier"
+            and getattr(member, "value", None) == name
+            and getattr(opening, "type", None) == "punctuation"
+            and getattr(opening, "value", None) == "("
+        ):
+            continue
+        member_span = getattr(member, "span", None)
+        alias_span = getattr(alias, "span", None)
+        if (
+            isinstance(member_span, SourceSpan)
+            and isinstance(alias_span, SourceSpan)
+            and _span_inside(alias_span, outer)
+            and _span_inside(member_span, outer)
+        ):
+            return member_span
     return None
 
 

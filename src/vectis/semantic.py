@@ -202,6 +202,8 @@ class SemanticAnalyzer:
             )
             if identity is not None:
                 return identity
+        if expression.qualifier is not None:
+            return f"{expression.qualifier}.{expression.name}"
         return expression.name
 
     def _function_label(
@@ -937,7 +939,11 @@ class SemanticAnalyzer:
 
         if isinstance(expression, CallExpression):
             diagnostics: list[Diagnostic] = []
-            builtin = BUILTINS.get(expression.name)
+            builtin = (
+                BUILTINS.get(expression.name)
+                if expression.qualifier is None
+                else None
+            )
             user_function = self.functions.get(
                 self._call_key(expression)
             )
@@ -1019,7 +1025,8 @@ class SemanticAnalyzer:
                 )
 
             if (
-                expression.name == "get"
+                expression.qualifier is None
+                and expression.name == "get"
                 and len(expression.arguments) >= 2
                 and isinstance(expression.arguments[1], StringLiteral)
             ):
@@ -1365,6 +1372,11 @@ class SemanticAnalyzer:
                 return local_types.get(expression.name)
             return self.declaration_contracts.get(expression.name)
         if isinstance(expression, CallExpression):
+            if expression.qualifier is not None:
+                return self._infer_function_contract(
+                    self._call_key(expression),
+                    stack=function_stack,
+                )
             if expression.name == "list":
                 items = tuple(
                     self._infer_contract(

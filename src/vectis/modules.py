@@ -169,7 +169,19 @@ def resolve_module_function_scope(
     ] = []
 
     for _importer, imports in resolved_imports.items():
+        aliases: set[str] = set()
         for statement, target_path in imports:
+            if statement.alias is not None:
+                if statement.alias in aliases:
+                    raise ModuleError(
+                        (
+                            "duplicate module alias in one module: "
+                            f"{statement.alias}"
+                        ),
+                        span=statement.span,
+                    )
+                aliases.add(statement.alias)
+
             if statement.names is None:
                 continue
             target_label = target_path.relative_to(root).as_posix()
@@ -230,11 +242,12 @@ def resolve_module_function_scope(
                 if declaration.visibility == "public":
                     result.add(function_id)
 
-            for _statement, target in resolved_imports.get(
+            for statement, target in resolved_imports.get(
                 current,
                 (),
             ):
-                pending.append(target)
+                if statement.alias is None:
+                    pending.append(target)
 
         frozen = frozenset(result)
         public_surface_cache[module_path] = frozen
@@ -252,6 +265,12 @@ def resolve_module_function_scope(
                     set(),
                 ).add(function_id)
 
+    graph_has_alias = any(
+        statement.alias is not None
+        for imports in resolved_imports.values()
+        for statement, _target in imports
+    )
+
     call_bindings: list[
         tuple[SourceSpan, ModuleFunctionId]
     ] = []
@@ -259,16 +278,27 @@ def resolve_module_function_scope(
     for module_path, program in programs.items():
         local = direct.get(module_path, {})
         imports = resolved_imports.get(module_path, ())
-        selective_mode = any(
+        aliases = {
+            statement.alias: (statement, target_path)
+            for statement, target_path in imports
+            if statement.alias is not None
+        }
+        legacy_selective_mode = any(
             statement.names is not None
             for statement, _target in imports
         )
-        allowed: set[ModuleFunctionId] = set()
+        constrained_bare_mode = (
+            graph_has_alias
+            or legacy_selective_mode
+        )
+        allowed_bare: set[ModuleFunctionId] = set()
 
-        if selective_mode:
+        if constrained_bare_mode:
             for statement, target_path in imports:
+                if statement.alias is not None:
+                    continue
                 if statement.names is None:
-                    allowed.update(
+                    allowed_bare.update(
                         public_surface(target_path)
                     )
                 else:
@@ -278,11 +308,66 @@ def resolve_module_function_scope(
                             {},
                         ).get(name)
                         if pair is not None:
-                            allowed.add(pair[1])
+                            allowed_bare.add(pair[1])
 
         for node in _walk_nodes(program):
             if not isinstance(node, CallExpression):
                 continue
+
+            if node.qualifier is not None:
+                alias_import = aliases.get(node.qualifier)
+                importer = module_path.relative_to(root).as_posix()
+                if alias_import is None:
+                    raise ModuleError(
+                        (
+                            f"unknown module alias {node.qualifier!r} "
+                            f"in module {importer}"
+                        ),
+                        span=node.span,
+                    )
+
+                statement, target_path = alias_import
+                target_label = target_path.relative_to(root).as_posix()
+                pair = direct.get(
+                    target_path,
+                    {},
+                ).get(node.name)
+                if pair is None:
+                    raise ModuleError(
+                        (
+                            f"function {node.name!r} is not declared by "
+                            f"aliased module {target_label}"
+                        ),
+                        span=node.span,
+                    )
+
+                target, function_id = pair
+                if target.visibility == "private":
+                    raise ModuleError(
+                        (
+                            f"function {node.name!r} is private to "
+                            f"module {target_label}"
+                        ),
+                        span=node.span,
+                    )
+
+                if (
+                    statement.names is not None
+                    and node.name not in statement.names
+                ):
+                    raise ModuleError(
+                        (
+                            f"function {node.name!r} is not selected by "
+                            f"module alias {node.qualifier!r}"
+                        ),
+                        span=node.span,
+                    )
+
+                call_bindings.append(
+                    (node.span, function_id)
+                )
+                continue
+
             if node.name in BUILTINS:
                 continue
 
@@ -293,10 +378,10 @@ def resolve_module_function_scope(
                 )
                 continue
 
-            if selective_mode:
+            if constrained_bare_mode:
                 candidates = sorted(
                     function_id
-                    for function_id in allowed
+                    for function_id in allowed_bare
                     if function_id.name == node.name
                 )
             else:
@@ -349,14 +434,25 @@ def resolve_module_function_scope(
                 )
 
             if (
-                selective_mode
-                and function_id not in allowed
+                constrained_bare_mode
+                and function_id not in allowed_bare
             ):
                 importer = module_path.relative_to(root).as_posix()
+                if (
+                    legacy_selective_mode
+                    and not graph_has_alias
+                ):
+                    raise ModuleError(
+                        (
+                            f"function {node.name!r} is not selected by "
+                            f"imports in module {importer}"
+                        ),
+                        span=node.span,
+                    )
                 raise ModuleError(
                     (
-                        f"function {node.name!r} is not selected by "
-                        f"imports in module {importer}"
+                        f"function {node.name!r} is not available as "
+                        f"a bare call in module {importer}"
                     ),
                     span=node.span,
                 )

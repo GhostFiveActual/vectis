@@ -522,10 +522,19 @@ def evaluate_expression(
             )
         return env[expression.name]
     if isinstance(expression, CallExpression):
-        function = BUILTINS.get(expression.name)
+        function = (
+            BUILTINS.get(expression.name)
+            if expression.qualifier is None
+            else None
+        )
         if function is None:
+            label = (
+                expression.name
+                if expression.qualifier is None
+                else f"{expression.qualifier}.{expression.name}"
+            )
             raise EvaluationError(
-                f"Unknown built-in function {expression.name!r}"
+                f"Unknown built-in function {label!r}"
             )
         function.validate_arity(len(expression.arguments))
         arguments = tuple(

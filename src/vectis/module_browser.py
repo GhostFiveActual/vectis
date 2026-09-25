@@ -275,6 +275,7 @@ def browse_project_modules(
                             if statement.names is None
                             else list(statement.names)
                         ),
+                        "alias": statement.alias,
                         "status": (
                             "resolved"
                             if issue is None
