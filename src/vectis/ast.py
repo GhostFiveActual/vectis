@@ -210,6 +210,21 @@ class Block(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class NamespaceDeclaration(Statement):
+    """Declare one stable logical namespace for a source module."""
+
+    name: str
+
+    def __post_init__(self) -> None:
+        Node.__post_init__(self)
+        _require_name(self.name, "NamespaceDeclaration.name")
+        if self.name in {"true", "false"}:
+            raise ValueError(
+                "NamespaceDeclaration.name cannot be a boolean literal name"
+            )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImportStatement(Statement):
     """Import pure declarations from another VECTIS source module."""
 

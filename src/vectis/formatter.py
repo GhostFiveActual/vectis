@@ -19,6 +19,7 @@ from vectis.ast import (
     Expression,
     FunctionDeclaration,
     ImportStatement,
+    NamespaceDeclaration,
     IndexAccess,
     LetDeclaration,
     ListLiteral,
@@ -108,6 +109,8 @@ def _format_block(block: Block, level: int) -> list[str]:
 def _format_statement(statement: Statement, level: int) -> list[str]:
     indent = "    " * level
 
+    if isinstance(statement, NamespaceDeclaration):
+        return [f"{indent}namespace {statement.name};"]
     if isinstance(statement, ImportStatement):
         selected = ""
         if statement.names is not None:
