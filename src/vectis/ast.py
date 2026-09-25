@@ -226,11 +226,12 @@ class NamespaceDeclaration(Statement):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ImportStatement(Statement):
-    """Import pure declarations from another VECTIS source module."""
+    """Import pure declarations from a source module or project package."""
 
     path: str
     names: tuple[str, ...] | None = None
     alias: str | None = None
+    package: bool = False
 
     def __post_init__(self) -> None:
         Node.__post_init__(self)
@@ -238,6 +239,21 @@ class ImportStatement(Statement):
             raise ValueError(
                 "ImportStatement.path must be a non-empty string"
             )
+        if not isinstance(self.package, bool):
+            raise TypeError("ImportStatement.package must be bool")
+        if self.package:
+            valid_package_name = (
+                (self.path[0].isalpha() or self.path[0] == "_")
+                and all(
+                    character.isalnum() or character == "_"
+                    for character in self.path[1:]
+                )
+                and self.path not in {"true", "false"}
+            )
+            if not valid_package_name:
+                raise ValueError(
+                    "ImportStatement package name must be a VECTIS identifier"
+                )
         if self.alias is not None:
             _require_name(
                 self.alias,

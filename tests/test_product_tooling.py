@@ -95,7 +95,7 @@ class ProductToolingTests(unittest.TestCase):
                 (root / "lib" / "readiness.vectis").is_file()
             )
             self.assertIn(
-                'import "../lib/readiness.vectis";',
+                'import package "readiness";',
                 (root / "missions" / "main.vectis").read_text(
                     encoding="utf-8"
                 ),
@@ -347,7 +347,8 @@ class ProductToolingTests(unittest.TestCase):
                 root / "missions" / "main.vectis"
             )
             compiled = compile_program(
-                loaded.program
+                loaded.program,
+                function_scope=loaded.function_scope,
             )
             self.assertTrue(compiled.ok)
             result = Runtime(compiled.graph).execute()

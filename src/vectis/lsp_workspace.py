@@ -40,6 +40,12 @@ from vectis.modules import (
     module_root_for,
     resolve_module_function_scope,
 )
+from vectis.package_manifest import (
+    PackageManifest,
+    PackageManifestError,
+    load_package_manifest,
+    package_entry_path,
+)
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
 
@@ -170,10 +176,79 @@ def load_workspace_program(
             or module_path.is_file()
         )
 
+    package_manifest: PackageManifest | None = None
+    package_manifest_loaded = False
+
+    def project_packages() -> PackageManifest:
+        nonlocal package_manifest
+        nonlocal package_manifest_loaded
+
+        if not package_manifest_loaded:
+            package_manifest = load_package_manifest(
+                project_root,
+                require=True,
+            )
+            package_manifest_loaded = True
+
+        if package_manifest is None:
+            raise RuntimeError(
+                "package manifest cache did not initialize"
+            )
+        return package_manifest
+
     def resolve_import(
         statement: ImportStatement,
         importer: Path,
     ) -> Path:
+        if statement.package:
+            try:
+                manifest = project_packages()
+            except PackageManifestError as exc:
+                raise ModuleError(
+                    str(exc),
+                    span=statement.span,
+                ) from exc
+
+            declaration = manifest.package(
+                statement.path
+            )
+            if declaration is None:
+                raise ModuleError(
+                    f"unknown package {statement.path!r}",
+                    span=statement.span,
+                )
+
+            try:
+                candidate = package_entry_path(
+                    project_root,
+                    declaration,
+                )
+            except PackageManifestError as exc:
+                raise ModuleError(
+                    str(exc),
+                    span=statement.span,
+                ) from exc
+
+            if not _inside_root(
+                candidate,
+                project_root,
+            ):
+                raise ModuleError(
+                    "package entry escapes the module root",
+                    span=statement.span,
+                )
+
+            if not exists(candidate):
+                raise ModuleError(
+                    (
+                        "package entry does not exist: "
+                        f"{declaration.entry}"
+                    ),
+                    span=statement.span,
+                )
+
+            return candidate
+
         raw = Path(statement.path)
 
         if raw.is_absolute():

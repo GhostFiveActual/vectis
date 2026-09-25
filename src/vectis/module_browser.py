@@ -11,6 +11,11 @@ from typing import Mapping
 from vectis.ast import FunctionDeclaration, ImportStatement, NamespaceDeclaration
 from vectis.diagnostic import DiagnosticError
 from vectis.modules import module_root_for
+from vectis.package_manifest import (
+    PackageManifestError,
+    load_package_manifest,
+    package_entry_path,
+)
 from vectis.parser import parse
 
 
@@ -221,6 +226,49 @@ def browse_project_modules(
     )
     available = set(module_paths)
 
+    package_manifest = None
+    package_diagnostics: list[dict[str, object]] = []
+    try:
+        package_manifest = load_package_manifest(root)
+    except PackageManifestError as exc:
+        package_diagnostics.append(
+            {
+                "code": "SEM006",
+                "severity": "error",
+                "message": str(exc),
+                "line": 1,
+                "column": 1,
+            }
+        )
+
+    package_by_name = (
+        {
+            item.name: item
+            for item in package_manifest.packages
+        }
+        if package_manifest is not None
+        else {}
+    )
+
+    for declaration in package_by_name.values():
+        candidate = package_entry_path(
+            root,
+            declaration,
+        )
+        if candidate not in available:
+            package_diagnostics.append(
+                {
+                    "code": "SEM006",
+                    "severity": "error",
+                    "message": (
+                        f"package {declaration.name!r} entry is missing: "
+                        f"{declaration.entry}"
+                    ),
+                    "line": 1,
+                    "column": 1,
+                }
+            )
+
     modules: list[dict[str, object]] = []
     resolved_edges: set[tuple[str, str]] = set()
 
@@ -292,16 +340,52 @@ def browse_project_modules(
 
         for statement in program.statements:
             if isinstance(statement, ImportStatement):
-                source_label, target, issue = _resolve_import(
-                    importer=module_path,
-                    value=statement.path,
-                    root=root,
-                    available=available,
+                package_name = (
+                    statement.path
+                    if statement.package
+                    else None
                 )
+                if statement.package:
+                    declaration = package_by_name.get(
+                        statement.path
+                    )
+                    source_label = (
+                        f"package:{statement.path}"
+                    )
+                    if package_manifest is None:
+                        target = None
+                        issue = "package-manifest-invalid"
+                    elif declaration is None:
+                        target = None
+                        issue = "unknown-package"
+                    else:
+                        candidate = package_entry_path(
+                            root,
+                            declaration,
+                        )
+                        target = declaration.entry
+                        issue = (
+                            None
+                            if candidate in available
+                            else "missing"
+                        )
+                else:
+                    (
+                        source_label,
+                        target,
+                        issue,
+                    ) = _resolve_import(
+                        importer=module_path,
+                        value=statement.path,
+                        root=root,
+                        available=available,
+                    )
+
                 imports.append(
                     {
                         "source": source_label,
                         "target": target,
+                        "package": package_name,
                         "names": (
                             None
                             if statement.names is None
@@ -384,6 +468,34 @@ def browse_project_modules(
     )
     edges = tuple(sorted(resolved_edges))
     cycles = _dependency_cycles(module_names, edges)
+    modules_by_path = {
+        item["path"]: item
+        for item in modules
+        if isinstance(item.get("path"), str)
+    }
+    packages: list[dict[str, object]] = []
+    for name in sorted(package_by_name):
+        declaration = package_by_name[name]
+        module = modules_by_path.get(declaration.entry)
+        exports = (
+            sorted(
+                function["name"]
+                for function in module["functions"]
+                if (
+                    function.get("visibility") == "public"
+                    and isinstance(function.get("name"), str)
+                )
+            )
+            if module is not None
+            else []
+        )
+        packages.append(
+            {
+                "name": declaration.name,
+                "entry": declaration.entry,
+                "exports": exports,
+            }
+        )
 
     return {
         "schema": MODULE_BROWSER_SCHEMA,
@@ -391,6 +503,7 @@ def browse_project_modules(
         "ok": (
             not rejected
             and not cycles
+            and not package_diagnostics
             and all(
                 item["status"] == "ok"
                 for item in modules
@@ -398,6 +511,9 @@ def browse_project_modules(
         ),
         "module_count": len(modules),
         "edge_count": len(edges),
+        "package_count": len(packages),
+        "packages": packages,
+        "package_diagnostics": package_diagnostics,
         "modules": modules,
         "edges": [
             {

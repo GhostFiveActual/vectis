@@ -120,8 +120,9 @@ def _format_statement(statement: Statement, level: int) -> list[str]:
             if statement.alias is None
             else f" as {statement.alias}"
         )
+        package = "package " if statement.package else ""
         return [
-            f"{indent}import "
+            f"{indent}import {package}"
             f"{json.dumps(statement.path, ensure_ascii=False)}"
             f"{selected}{alias};"
         ]
