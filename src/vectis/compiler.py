@@ -21,6 +21,7 @@ from vectis.ast import (
     ListLiteral,
     MemberAccess,
     Mission,
+    NamespaceDeclaration,
     NumberLiteral,
     ObjectLiteral,
     Program,
@@ -511,7 +512,7 @@ class _GraphBuilder:
         return (node_id,)
 
     def _compile_statement(self, statement: Statement) -> tuple[str, ...]:
-        if isinstance(statement, FunctionDeclaration):
+        if isinstance(statement, (FunctionDeclaration, NamespaceDeclaration)):
             return ()
 
         if isinstance(statement, Mission):

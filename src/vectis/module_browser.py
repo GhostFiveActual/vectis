@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Mapping
 
-from vectis.ast import FunctionDeclaration, ImportStatement
+from vectis.ast import FunctionDeclaration, ImportStatement, NamespaceDeclaration
 from vectis.diagnostic import DiagnosticError
 from vectis.modules import module_root_for
 from vectis.parser import parse
@@ -243,6 +243,7 @@ def browse_project_modules(
                     "kind": "unknown",
                     "importable": False,
                     "imports": [],
+                    "namespace": None,
                     "functions": [],
                     "executable_statement_count": 0,
                     "diagnostics": [
@@ -257,6 +258,37 @@ def browse_project_modules(
         diagnostics: list[dict[str, object]] = []
         functions: list[dict[str, object]] = []
         executable_count = 0
+        namespace_name: str | None = None
+        namespaces = tuple(
+            statement
+            for statement in program.statements
+            if isinstance(statement, NamespaceDeclaration)
+        )
+        if len(namespaces) > 1:
+            diagnostics.append(
+                {
+                    "code": "SEM006",
+                    "severity": "error",
+                    "message": "duplicate namespace declaration",
+                    "line": namespaces[1].span.start.line,
+                    "column": namespaces[1].span.start.column,
+                }
+            )
+        elif namespaces:
+            declaration = namespaces[0]
+            namespace_name = declaration.name
+            if program.statements[0] is not declaration:
+                diagnostics.append(
+                    {
+                        "code": "SEM006",
+                        "severity": "error",
+                        "message": (
+                            "namespace declaration must be the first statement"
+                        ),
+                        "line": declaration.span.start.line,
+                        "column": declaration.span.start.column,
+                    }
+                )
 
         for statement in program.statements:
             if isinstance(statement, ImportStatement):
@@ -298,6 +330,8 @@ def browse_project_modules(
                             "column": statement.span.start.column,
                         }
                     )
+            elif isinstance(statement, NamespaceDeclaration):
+                continue
             elif isinstance(statement, FunctionDeclaration):
                 parameter_types = (
                     statement.parameter_types
@@ -335,6 +369,7 @@ def browse_project_modules(
                     and executable_count == 0
                 ),
                 "imports": imports,
+                "namespace": namespace_name,
                 "functions": functions,
                 "executable_statement_count": executable_count,
                 "diagnostics": diagnostics,

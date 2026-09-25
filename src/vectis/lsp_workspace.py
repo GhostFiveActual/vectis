@@ -17,6 +17,7 @@ from vectis.ast import (
     FunctionDeclaration,
     ImportStatement,
     LetDeclaration,
+    NamespaceDeclaration,
     Node,
     Program,
     Reference,
@@ -292,7 +293,7 @@ def load_workspace_program(
             for statement in program.statements
             if not isinstance(
                 statement,
-                ImportStatement,
+                (ImportStatement, NamespaceDeclaration),
             )
         )
 
@@ -324,8 +325,9 @@ def load_workspace_program(
             if invalid is not None:
                 raise ModuleError(
                     (
-                        "imported modules may contain only imports "
-                        "and pure function declarations"
+                        "imported modules may contain only imports, "
+                        "one optional namespace declaration, and pure "
+                        "function declarations"
                     ),
                     span=invalid.span,
                 )

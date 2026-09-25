@@ -39,6 +39,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 23. [RFC 0023: Selective function imports](0023-selective-function-imports.md)
 24. [RFC 0024: Module-scoped function identity](0024-module-scoped-function-identity.md)
 25. [RFC 0025: Module aliases and qualified calls](0025-module-aliases-qualified-calls.md)
+26. [RFC 0026: Explicit namespace declarations](0026-explicit-namespace-declarations.md)
 
 ## When an RFC is required
 

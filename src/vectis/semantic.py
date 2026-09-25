@@ -20,6 +20,7 @@ from vectis.ast import (
     Expression,
     FunctionDeclaration,
     ImportStatement,
+    NamespaceDeclaration,
     IndexAccess,
     LetDeclaration,
     ListLiteral,
@@ -221,7 +222,10 @@ class SemanticAnalyzer:
         self.declarations = {}
         self.declaration_contracts = {}
         self.functions = {}
-        diagnostics = self._collect_functions()
+        diagnostics = self._namespace_diagnostics()
+        diagnostics.extend(
+            self._collect_functions()
+        )
         diagnostics.extend(
             self._function_cycle_diagnostics()
         )
@@ -244,6 +248,35 @@ class SemanticAnalyzer:
         span: SourceSpan,
     ) -> Diagnostic:
         return error_diagnostic(code=code, message=message, span=span)
+
+    def _namespace_diagnostics(self) -> list[Diagnostic]:
+        namespaces = tuple(
+            statement
+            for statement in self.program.statements
+            if isinstance(statement, NamespaceDeclaration)
+        )
+        diagnostics: list[Diagnostic] = []
+        if len(namespaces) > 1:
+            diagnostics.append(
+                self._diagnostic(
+                    DiagnosticCode.SEM_IMPORT_RESOLUTION,
+                    "duplicate namespace declaration in module",
+                    namespaces[1].span,
+                )
+            )
+        if (
+            namespaces
+            and self.program.statements
+            and self.program.statements[0] is not namespaces[0]
+        ):
+            diagnostics.append(
+                self._diagnostic(
+                    DiagnosticCode.SEM_IMPORT_RESOLUTION,
+                    "namespace declaration must be the first statement",
+                    namespaces[0].span,
+                )
+            )
+        return diagnostics
 
     def _collect_functions(self) -> list[Diagnostic]:
         diagnostics: list[Diagnostic] = []
@@ -717,6 +750,20 @@ class SemanticAnalyzer:
         *,
         top_level: bool = False,
     ) -> list[Diagnostic]:
+        if isinstance(statement, NamespaceDeclaration):
+            if not top_level:
+                return [
+                    self._diagnostic(
+                        DiagnosticCode.SEM_TYPE_MISMATCH,
+                        (
+                            "namespace declarations are only allowed "
+                            "at program top level"
+                        ),
+                        statement.span,
+                    )
+                ]
+            return []
+
         if isinstance(statement, ImportStatement):
             return [
                 self._diagnostic(

@@ -12,6 +12,7 @@ from vectis.ast import (
     CallExpression,
     FunctionDeclaration,
     ImportStatement,
+    NamespaceDeclaration,
     Node,
     Program,
     Statement,
@@ -103,6 +104,38 @@ def resolve_module_function_scope(
 ) -> ModuleFunctionScope:
     """Resolve durable function identity across one loaded module graph."""
     resolved_imports = imports_by_path or {}
+    namespace_by_path: dict[Path, tuple[str, SourceSpan]] = {}
+
+    for module_path, program in programs.items():
+        namespaces = tuple(
+            statement
+            for statement in program.statements
+            if isinstance(statement, NamespaceDeclaration)
+        )
+        module_label = module_path.relative_to(root).as_posix()
+        if len(namespaces) > 1:
+            raise ModuleError(
+                (
+                    "duplicate namespace declaration in module "
+                    f"{module_label}"
+                ),
+                span=namespaces[1].span,
+            )
+        if namespaces:
+            declaration = namespaces[0]
+            if not program.statements or program.statements[0] is not declaration:
+                raise ModuleError(
+                    (
+                        "namespace declaration must be the first "
+                        f"statement in module {module_label}"
+                    ),
+                    span=declaration.span,
+                )
+            namespace_by_path[module_path] = (
+                declaration.name,
+                declaration.span,
+            )
+
     direct: dict[
         Path,
         dict[
@@ -270,6 +303,7 @@ def resolve_module_function_scope(
         for imports in resolved_imports.values()
         for statement, _target in imports
     )
+    graph_has_namespace = bool(namespace_by_path)
 
     call_bindings: list[
         tuple[SourceSpan, ModuleFunctionId]
@@ -278,11 +312,80 @@ def resolve_module_function_scope(
     for module_path, program in programs.items():
         local = direct.get(module_path, {})
         imports = resolved_imports.get(module_path, ())
-        aliases = {
-            statement.alias: (statement, target_path)
-            for statement, target_path in imports
-            if statement.alias is not None
-        }
+        qualifiers: dict[
+            str,
+            tuple[
+                Path,
+                str,
+                frozenset[str] | None,
+                SourceSpan,
+            ],
+        ] = {}
+        for statement, target_path in imports:
+            if statement.alias is not None:
+                selected = (
+                    None
+                    if statement.names is None
+                    else frozenset(statement.names)
+                )
+                qualifiers[statement.alias] = (
+                    target_path,
+                    "alias",
+                    selected,
+                    statement.span,
+                )
+
+        for statement, target_path in imports:
+            if statement.alias is not None:
+                continue
+            declared = namespace_by_path.get(target_path)
+            if declared is None:
+                continue
+            namespace_name, _namespace_span = declared
+            selected = (
+                None
+                if statement.names is None
+                else frozenset(statement.names)
+            )
+            existing = qualifiers.get(namespace_name)
+            if existing is not None:
+                (
+                    existing_target,
+                    existing_kind,
+                    existing_selected,
+                    existing_span,
+                ) = existing
+                if (
+                    existing_kind == "namespace"
+                    and existing_target == target_path
+                ):
+                    merged_selected = (
+                        None
+                        if existing_selected is None or selected is None
+                        else existing_selected | selected
+                    )
+                    qualifiers[namespace_name] = (
+                        target_path,
+                        "namespace",
+                        merged_selected,
+                        existing_span,
+                    )
+                    continue
+                importer = module_path.relative_to(root).as_posix()
+                raise ModuleError(
+                    (
+                        "duplicate module qualifier in module "
+                        f"{importer}: {namespace_name}"
+                    ),
+                    span=statement.span,
+                )
+            qualifiers[namespace_name] = (
+                target_path,
+                "namespace",
+                selected,
+                statement.span,
+            )
+
         legacy_selective_mode = any(
             statement.names is not None
             for statement, _target in imports
@@ -315,28 +418,45 @@ def resolve_module_function_scope(
                 continue
 
             if node.qualifier is not None:
-                alias_import = aliases.get(node.qualifier)
+                qualified_import = qualifiers.get(node.qualifier)
                 importer = module_path.relative_to(root).as_posix()
-                if alias_import is None:
-                    raise ModuleError(
-                        (
+                if qualified_import is None:
+                    if graph_has_namespace:
+                        message = (
+                            f"unknown module qualifier {node.qualifier!r} "
+                            f"in module {importer}"
+                        )
+                    else:
+                        message = (
                             f"unknown module alias {node.qualifier!r} "
                             f"in module {importer}"
-                        ),
+                        )
+                    raise ModuleError(
+                        message,
                         span=node.span,
                     )
 
-                statement, target_path = alias_import
+                (
+                    target_path,
+                    qualifier_kind,
+                    selected_names,
+                    _qualifier_span,
+                ) = qualified_import
                 target_label = target_path.relative_to(root).as_posix()
                 pair = direct.get(
                     target_path,
                     {},
                 ).get(node.name)
                 if pair is None:
+                    owner_kind = (
+                        "aliased"
+                        if qualifier_kind == "alias"
+                        else "namespaced"
+                    )
                     raise ModuleError(
                         (
                             f"function {node.name!r} is not declared by "
-                            f"aliased module {target_label}"
+                            f"{owner_kind} module {target_label}"
                         ),
                         span=node.span,
                     )
@@ -352,13 +472,18 @@ def resolve_module_function_scope(
                     )
 
                 if (
-                    statement.names is not None
-                    and node.name not in statement.names
+                    selected_names is not None
+                    and node.name not in selected_names
                 ):
+                    qualifier_label = (
+                        "module alias"
+                        if qualifier_kind == "alias"
+                        else "module namespace"
+                    )
                     raise ModuleError(
                         (
                             f"function {node.name!r} is not selected by "
-                            f"module alias {node.qualifier!r}"
+                            f"{qualifier_label} {node.qualifier!r}"
                         ),
                         span=node.span,
                     )
@@ -614,7 +739,10 @@ def load_program_file(
         declarations = tuple(
             statement
             for statement in program.statements
-            if not isinstance(statement, ImportStatement)
+            if not isinstance(
+                statement,
+                (ImportStatement, NamespaceDeclaration),
+            )
         )
 
         if is_entry:
@@ -638,8 +766,9 @@ def load_program_file(
             if invalid is not None:
                 raise ModuleError(
                     (
-                        "imported modules may contain only imports "
-                        "and pure function declarations"
+                        "imported modules may contain only imports, "
+                        "one optional namespace declaration, and pure "
+                        "function declarations"
                     ),
                     span=invalid.span,
                 )

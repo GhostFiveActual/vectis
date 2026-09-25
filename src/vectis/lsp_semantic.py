@@ -73,6 +73,10 @@ def semantic_tokens(
         import_alias_keywords,
         import_alias_declarations,
     ) = _import_alias_context(tokens)
+    (
+        namespace_keywords,
+        namespace_declarations,
+    ) = _namespace_context(tokens)
     lines = source.split("\n")
     encoded: list[int] = []
     previous_line = 0
@@ -90,6 +94,8 @@ def semantic_tokens(
             import_selectors=import_selectors,
             import_alias_keywords=import_alias_keywords,
             import_alias_declarations=import_alias_declarations,
+            namespace_keywords=namespace_keywords,
+            namespace_declarations=namespace_declarations,
             regions=regions,
         )
         if classification is None:
@@ -142,6 +148,8 @@ def _classification(
     import_selectors: frozenset[int],
     import_alias_keywords: frozenset[int],
     import_alias_declarations: frozenset[int],
+    namespace_keywords: frozenset[int],
+    namespace_declarations: frozenset[int],
     regions: tuple[_FunctionRegion, ...],
 ) -> tuple[str, int] | None:
     token = tokens[index]
@@ -174,6 +182,15 @@ def _classification(
         return ("keyword", 0)
 
     if index in import_alias_declarations:
+        return (
+            "variable",
+            _DECLARATION,
+        )
+
+    if index in namespace_keywords:
+        return ("keyword", 0)
+
+    if index in namespace_declarations:
         return (
             "variable",
             _DECLARATION,
@@ -404,6 +421,31 @@ def _consume_type_annotation(
 
     return cursor
 
+
+
+def _namespace_context(
+    tokens: list[object],
+) -> tuple[frozenset[int], frozenset[int]]:
+    """Return contextual namespace-keyword and declaration token indexes."""
+    keywords: set[int] = set()
+    declarations: set[int] = set()
+
+    for index in range(len(tokens) - 2):
+        token = tokens[index]
+        name = tokens[index + 1]
+        end = tokens[index + 2]
+        if not (
+            getattr(token, "type", None) == "identifier"
+            and getattr(token, "value", None) == "namespace"
+            and getattr(name, "type", None) == "identifier"
+            and getattr(end, "type", None) == "punctuation"
+            and getattr(end, "value", None) == ";"
+        ):
+            continue
+        keywords.add(index)
+        declarations.add(index + 1)
+
+    return frozenset(keywords), frozenset(declarations)
 
 
 def _import_alias_context(

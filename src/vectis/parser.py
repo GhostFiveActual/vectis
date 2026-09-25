@@ -17,6 +17,7 @@ from vectis.ast import (
     Expression,
     FunctionDeclaration,
     ImportStatement,
+    NamespaceDeclaration,
     IndexAccess,
     LetDeclaration,
     ListLiteral,
@@ -117,6 +118,9 @@ class Parser:
         ):
             return self._parse_private_function()
 
+        if token.type == "identifier" and token.value == "namespace":
+            return self._parse_namespace()
+
         if token.type != "keyword":
             self._error(
                 f"expected statement keyword, found {token.value!r}",
@@ -159,6 +163,24 @@ class Parser:
             )
 
         return parser()
+
+    def _parse_namespace(self) -> NamespaceDeclaration:
+        start = self._expect("identifier", "namespace")
+        name = self._expect(
+            "identifier",
+            description="namespace name",
+        )
+        if name.value in {"true", "false"}:
+            self._error(
+                "namespace name cannot use a boolean literal name",
+                token=name,
+                code=DiagnosticCode.SYN_EXPECTED_TOKEN,
+            )
+        end = self._expect("punctuation", ";")
+        return NamespaceDeclaration(
+            span=self._cover(start.span, end.span),
+            name=name.value,
+        )
 
     def _parse_import(self) -> ImportStatement:
         start = self._expect("keyword", "import")
