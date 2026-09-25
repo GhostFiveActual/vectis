@@ -271,6 +271,8 @@ def browse_project_modules(
 
     modules: list[dict[str, object]] = []
     resolved_edges: set[tuple[str, str]] = set()
+    path_edges: set[tuple[str, str]] = set()
+    package_imports_by_module: dict[str, set[str]] = {}
 
     for module_path in module_paths:
         relative = _relative(module_path, root)
@@ -401,6 +403,13 @@ def browse_project_modules(
                 )
                 if target is not None and issue is None:
                     resolved_edges.add((relative, target))
+                    if statement.package:
+                        package_imports_by_module.setdefault(
+                            relative,
+                            set(),
+                        ).add(statement.path)
+                    else:
+                        path_edges.add((relative, target))
                 if issue is not None:
                     diagnostics.append(
                         {
@@ -468,6 +477,40 @@ def browse_project_modules(
     )
     edges = tuple(sorted(resolved_edges))
     cycles = _dependency_cycles(module_names, edges)
+
+    if package_manifest is not None:
+        path_graph: dict[str, list[str]] = {}
+        for source, target in sorted(path_edges):
+            path_graph.setdefault(source, []).append(target)
+
+        for declaration in package_manifest.packages:
+            if declaration.entry not in module_names:
+                continue
+            seen: set[str] = set()
+            pending = [declaration.entry]
+            while pending:
+                module_name = pending.pop()
+                if module_name in seen:
+                    continue
+                seen.add(module_name)
+                for imported_package in sorted(
+                    package_imports_by_module.get(module_name, set())
+                ):
+                    if declaration.dependency(imported_package) is None:
+                        package_diagnostics.append(
+                            {
+                                "code": "SEM006",
+                                "severity": "error",
+                                "message": (
+                                    f"package {declaration.name!r} imports package "
+                                    f"{imported_package!r} without a dependency contract"
+                                ),
+                                "line": 1,
+                                "column": 1,
+                            }
+                        )
+                pending.extend(path_graph.get(module_name, ()))
+
     modules_by_path = {
         item["path"]: item
         for item in modules
@@ -489,13 +532,22 @@ def browse_project_modules(
             if module is not None
             else []
         )
-        packages.append(
-            {
-                "name": declaration.name,
-                "entry": declaration.entry,
-                "exports": exports,
-            }
-        )
+        record: dict[str, object] = {
+            "name": declaration.name,
+            "entry": declaration.entry,
+            "exports": exports,
+        }
+        if declaration.version is not None:
+            record["version"] = declaration.version
+        if declaration.dependencies:
+            record["dependencies"] = [
+                {
+                    "name": dependency_name,
+                    "version": version,
+                }
+                for dependency_name, version in declaration.dependencies
+            ]
+        packages.append(record)
 
     return {
         "schema": MODULE_BROWSER_SCHEMA,

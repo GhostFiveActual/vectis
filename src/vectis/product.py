@@ -503,6 +503,7 @@ def initialize_project(root: Path, *, force: bool = False) -> tuple[Path, ...]:
             "\n"
             "[packages.readiness]\n"
             'entry = "lib/readiness.vectis"\n'
+            'version = "1.0.0"\n'
         ),
         root / "actions.example.toml": (
             "# GHOST FIVE // VECTIS\n"

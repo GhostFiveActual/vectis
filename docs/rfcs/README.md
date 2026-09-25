@@ -41,6 +41,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 25. [RFC 0025: Module aliases and qualified calls](0025-module-aliases-qualified-calls.md)
 26. [RFC 0026: Explicit namespace declarations](0026-explicit-namespace-declarations.md)
 27. [RFC 0027: Deterministic packages and package imports](0027-deterministic-packages-package-imports.md)
+28. [RFC 0028: Versioned package composition](0028-versioned-package-composition.md)
 
 ## When an RFC is required
 

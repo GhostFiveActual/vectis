@@ -204,11 +204,11 @@ class PackageImportTests(unittest.TestCase):
                 root,
                 "\n[packages.release]\n"
                 'entry = "release.vectis"\n'
-                'version = "1"\n',
+                'registry = "local"\n',
             )
             with self.assertRaisesRegex(
                 PackageManifestError,
-                "exactly the entry field",
+                "unsupported fields",
             ):
                 load_package_manifest(root)
 

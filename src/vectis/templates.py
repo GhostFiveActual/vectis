@@ -54,7 +54,8 @@ _TEMPLATES = (
                 'mission_root = "missions"\n'
                 "\n"
                 "[packages.readiness]\n"
-                'entry = "lib/readiness.vectis"\n',
+                'entry = "lib/readiness.vectis"\n'
+                'version = "1.0.0"\n',
             ),
             (
                 "actions.example.toml",
