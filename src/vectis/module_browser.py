@@ -11,6 +11,10 @@ from typing import Mapping
 from vectis.ast import FunctionDeclaration, ImportStatement, NamespaceDeclaration
 from vectis.diagnostic import DiagnosticError
 from vectis.modules import module_root_for
+from vectis.package_fingerprint import (
+    PackageFingerprintError,
+    package_fingerprint,
+)
 from vectis.package_manifest import (
     PackageManifestError,
     load_package_manifest,
@@ -532,6 +536,26 @@ def browse_project_modules(
             if module is not None
             else []
         )
+        fingerprint: str | None = None
+        if package_manifest is not None:
+            try:
+                fingerprint = package_fingerprint(
+                    root,
+                    declaration.name,
+                    overlays=overlay_sources,
+                    manifest=package_manifest,
+                )
+            except PackageFingerprintError as exc:
+                package_diagnostics.append(
+                    {
+                        "code": "SEM006",
+                        "severity": "error",
+                        "message": str(exc),
+                        "line": 1,
+                        "column": 1,
+                    }
+                )
+
         record: dict[str, object] = {
             "name": declaration.name,
             "entry": declaration.entry,
@@ -547,6 +571,8 @@ def browse_project_modules(
                 }
                 for dependency_name, version in declaration.dependencies
             ]
+        if fingerprint is not None:
+            record["fingerprint"] = fingerprint
         packages.append(record)
 
     return {

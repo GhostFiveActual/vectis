@@ -577,26 +577,39 @@ class PackageCompositionTests(unittest.TestCase):
             self.write(root, "release.vectis", 'import package "core";\nfunction release(value) { return core.ready(value); }\n')
             payload = browse_project_modules(root)
             self.assertTrue(payload["ok"], payload)
+            self.assertEqual(len(payload["packages"]), 2)
+            by_name = {item["name"]: item for item in payload["packages"]}
             self.assertEqual(
-                payload["packages"],
-                [
-                    {
-                        "name": "core",
-                        "entry": "core.vectis",
-                        "version": "1.0.0",
-                        "exports": ["ready"],
-                    },
-                    {
-                        "name": "release",
-                        "entry": "release.vectis",
-                        "version": "2.0.0",
-                        "dependencies": [
-                            {"name": "core", "version": "1.0.0"}
-                        ],
-                        "exports": ["release"],
-                    },
-                ],
+                {
+                    key: value
+                    for key, value in by_name["core"].items()
+                    if key != "fingerprint"
+                },
+                {
+                    "name": "core",
+                    "entry": "core.vectis",
+                    "version": "1.0.0",
+                    "exports": ["ready"],
+                },
             )
+            self.assertEqual(
+                {
+                    key: value
+                    for key, value in by_name["release"].items()
+                    if key != "fingerprint"
+                },
+                {
+                    "name": "release",
+                    "entry": "release.vectis",
+                    "version": "2.0.0",
+                    "dependencies": [
+                        {"name": "core", "version": "1.0.0"}
+                    ],
+                    "exports": ["release"],
+                },
+            )
+            self.assertRegex(by_name["core"]["fingerprint"], r"^[0-9a-f]{64}$")
+            self.assertRegex(by_name["release"]["fingerprint"], r"^[0-9a-f]{64}$")
 
     def test_module_browser_reports_undeclared_composition(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

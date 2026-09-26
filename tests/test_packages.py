@@ -958,15 +958,23 @@ class PackageImportTests(unittest.TestCase):
             )
             payload = browse_project_modules(root)
             self.assertTrue(payload["ok"], payload)
+            self.assertEqual(len(payload["packages"]), 1)
+            package = payload["packages"][0]
             self.assertEqual(
-                payload["packages"],
-                [
-                    {
-                        "name": "gate",
-                        "entry": "packages/gate.vectis",
-                        "exports": ["ready"],
-                    }
-                ],
+                {
+                    key: value
+                    for key, value in package.items()
+                    if key != "fingerprint"
+                },
+                {
+                    "name": "gate",
+                    "entry": "packages/gate.vectis",
+                    "exports": ["ready"],
+                },
+            )
+            self.assertRegex(
+                package["fingerprint"],
+                r"^[0-9a-f]{64}$",
             )
             entry = next(
                 item
