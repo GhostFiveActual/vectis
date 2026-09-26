@@ -17,6 +17,7 @@ from vectis.package_manifest import (
     PackageManifest,
     PackageManifestError,
     load_package_manifest,
+    local_dependency_project_path,
     package_entry_path,
 )
 from vectis.parser import parse
@@ -41,6 +42,15 @@ def _inside_root(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _source_project_root(path: Path) -> Path:
+    source = path.expanduser().resolve(strict=False)
+    start = source.parent if source.suffix else source
+    for candidate in (start, *start.parents):
+        if (candidate / "vectis.toml").is_file():
+            return candidate
+    return source.parent if source.suffix else source
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -122,6 +132,11 @@ def _resolve_path_import(
     if not _inside_root(candidate, root):
         raise PackageFingerprintError(
             "package implementation import path escapes the project root"
+        )
+    candidate_root = _source_project_root(candidate)
+    if (candidate_root / "vectis.toml").is_file() and candidate_root != root:
+        raise PackageFingerprintError(
+            "package implementation import path crosses a project boundary"
         )
     if candidate.suffix != ".vectis":
         raise PackageFingerprintError(
@@ -225,96 +240,190 @@ def package_descriptor(
 
     project_root = root.expanduser().resolve()
     overlay_map = _overlay_sources(overlays)
+    manifest_cache: dict[Path, PackageManifest] = {}
 
     try:
-        package_manifest = (
+        root_manifest = (
             load_package_manifest(project_root, require=True)
             if manifest is None
             else manifest
         )
     except PackageManifestError as exc:
         raise PackageFingerprintError(str(exc)) from exc
+    manifest_cache[project_root] = root_manifest
 
-    declaration = package_manifest.package(package_name)
+    declaration = root_manifest.package(package_name)
     if declaration is None:
         raise PackageFingerprintError(
             f"unknown package {package_name!r}"
         )
 
-    fingerprint_cache: dict[str, str] = {}
-    descriptor_cache: dict[str, dict[str, object]] = {}
-    stack: list[str] = []
+    fingerprint_cache: dict[tuple[Path, str], str] = {}
+    descriptor_cache: dict[tuple[Path, str], dict[str, object]] = {}
+    stack: list[tuple[Path, str]] = []
 
-    def build(name: str) -> dict[str, object]:
-        cached = descriptor_cache.get(name)
+    def manifest_for(current_root: Path) -> PackageManifest:
+        cached = manifest_cache.get(current_root)
         if cached is not None:
             return cached
-        if name in stack:
-            cycle = [*stack[stack.index(name):], name]
+        try:
+            loaded = load_package_manifest(
+                current_root,
+                require=True,
+            )
+        except PackageManifestError as exc:
+            raise PackageFingerprintError(str(exc)) from exc
+        manifest_cache[current_root] = loaded
+        return loaded
+
+    def external_target(
+        current_root: Path,
+        current_manifest: PackageManifest,
+        dependency_name: str,
+    ) -> tuple[Path, PackageManifest, PackageDeclaration, str]:
+        binding = current_manifest.local_dependency(dependency_name)
+        if binding is None:
+            raise PackageFingerprintError(
+                f"package dependency {dependency_name!r} is not declared"
+            )
+        try:
+            target_root = local_dependency_project_path(
+                current_root,
+                binding,
+            )
+        except PackageManifestError as exc:
+            raise PackageFingerprintError(str(exc)) from exc
+        if not target_root.is_dir():
+            raise PackageFingerprintError(
+                f"local dependency {binding.name!r} project does not exist: "
+                f"{binding.project}"
+            )
+        target_manifest = manifest_for(target_root)
+        target = target_manifest.package(binding.package)
+        if target is None:
+            raise PackageFingerprintError(
+                f"local dependency {binding.name!r} target package "
+                f"{binding.package!r} is not declared"
+            )
+        if target.version != binding.version:
+            raise PackageFingerprintError(
+                f"local dependency {binding.name!r} requires version "
+                f"{binding.version!r}, found {target.version!r}"
+            )
+        return target_root, target_manifest, target, binding.fingerprint
+
+    def build(current_root: Path, name: str) -> dict[str, object]:
+        key = (current_root, name)
+        cached = descriptor_cache.get(key)
+        if cached is not None:
+            return cached
+        if key in stack:
+            start_index = stack.index(key)
+            cycle = [*stack[start_index:], key]
             raise PackageFingerprintError(
                 "package fingerprint dependency cycle is not allowed: "
-                + " -> ".join(cycle)
+                + " -> ".join(item_name for _item_root, item_name in cycle)
             )
 
-        item = package_manifest.package(name)
+        current_manifest = manifest_for(current_root)
+        item = current_manifest.package(name)
         if item is None:
             raise PackageFingerprintError(
                 f"unknown package {name!r}"
             )
 
-        stack.append(name)
+        stack.append(key)
         try:
-            implementation = _implementation_files(
-                project_root,
-                item,
-                overlays=overlay_map,
-            )
-        except PackageManifestError as exc:
-            raise PackageFingerprintError(str(exc)) from exc
-        dependencies: list[dict[str, object]] = []
-        for dependency_name, required_version in item.dependencies:
-            target = package_manifest.package(dependency_name)
-            if target is None:
-                raise PackageFingerprintError(
-                    f"package {name!r} dependency {dependency_name!r} is not declared"
+            try:
+                implementation = _implementation_files(
+                    current_root,
+                    item,
+                    overlays=overlay_map,
                 )
-            dependency_descriptor = build(dependency_name)
-            dependency_fingerprint = fingerprint_cache.get(
-                dependency_name
-            )
-            if dependency_fingerprint is None:
-                dependency_fingerprint = _canonical_fingerprint(
-                    dependency_descriptor
+            except PackageManifestError as exc:
+                raise PackageFingerprintError(str(exc)) from exc
+
+            dependencies: list[dict[str, object]] = []
+            for dependency_name, required_version in item.dependencies:
+                local_target = current_manifest.package(dependency_name)
+                expected_external_fingerprint: str | None = None
+                if local_target is not None:
+                    dependency_root = current_root
+                    dependency_package = local_target.name
+                else:
+                    (
+                        dependency_root,
+                        _dependency_manifest,
+                        external_package,
+                        expected_external_fingerprint,
+                    ) = external_target(
+                        current_root,
+                        current_manifest,
+                        dependency_name,
+                    )
+                    dependency_package = external_package.name
+
+                dependency_descriptor = build(
+                    dependency_root,
+                    dependency_package,
                 )
-                fingerprint_cache[dependency_name] = dependency_fingerprint
-            dependencies.append(
-                {
-                    "name": dependency_name,
-                    "version": required_version,
-                    "fingerprint": dependency_fingerprint,
-                }
-            )
+                dependency_key = (
+                    dependency_root,
+                    dependency_package,
+                )
+                dependency_fingerprint = fingerprint_cache.get(
+                    dependency_key
+                )
+                if dependency_fingerprint is None:
+                    dependency_fingerprint = _canonical_fingerprint(
+                        dependency_descriptor
+                    )
+                    fingerprint_cache[dependency_key] = dependency_fingerprint
 
-        descriptor: dict[str, object] = {
-            "schema": PACKAGE_FINGERPRINT_SCHEMA,
-            "name": item.name,
-            "entry": item.entry,
-            "version": item.version,
-            "files": [
-                {
-                    "path": source.path,
-                    "sha256": source.source_sha256,
-                }
-                for source in implementation
-            ],
-            "dependencies": dependencies,
-        }
-        stack.pop()
-        descriptor_cache[name] = descriptor
-        fingerprint_cache[name] = _canonical_fingerprint(descriptor)
-        return descriptor
+                if (
+                    expected_external_fingerprint is not None
+                    and dependency_fingerprint != expected_external_fingerprint
+                ):
+                    binding = current_manifest.local_dependency(dependency_name)
+                    if binding is None:
+                        raise RuntimeError(
+                            "local dependency binding disappeared during fingerprinting"
+                        )
+                    raise PackageFingerprintError(
+                        f"local dependency {binding.name!r} fingerprint mismatch: "
+                        f"expected {binding.fingerprint}, found {dependency_fingerprint}"
+                    )
 
-    return build(declaration.name)
+                dependencies.append(
+                    {
+                        "name": dependency_name,
+                        "version": required_version,
+                        "fingerprint": dependency_fingerprint,
+                    }
+                )
+
+            descriptor: dict[str, object] = {
+                "schema": PACKAGE_FINGERPRINT_SCHEMA,
+                "name": item.name,
+                "entry": item.entry,
+                "version": item.version,
+                "files": [
+                    {
+                        "path": source.path,
+                        "sha256": source.source_sha256,
+                    }
+                    for source in implementation
+                ],
+                "dependencies": dependencies,
+            }
+            descriptor_cache[key] = descriptor
+            fingerprint_cache[key] = _canonical_fingerprint(descriptor)
+            return descriptor
+        finally:
+            if stack and stack[-1] == key:
+                stack.pop()
+
+    return build(project_root, declaration.name)
 
 
 def package_fingerprint(

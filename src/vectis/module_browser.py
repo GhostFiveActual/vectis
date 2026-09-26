@@ -20,6 +20,11 @@ from vectis.package_manifest import (
     load_package_manifest,
     package_entry_path,
 )
+from vectis.package_reference import (
+    PackageReference,
+    PackageReferenceError,
+    resolve_package_reference,
+)
 from vectis.parser import parse
 
 
@@ -36,6 +41,13 @@ def _inside_root(path: Path, root: Path) -> bool:
 
 def _relative(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
+
+
+def _composition_relative(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return Path(os.path.relpath(path, root)).as_posix()
 
 
 def _project_root(selection: Path) -> Path:
@@ -253,6 +265,61 @@ def browse_project_modules(
         if package_manifest is not None
         else {}
     )
+    local_dependency_by_name = (
+        {
+            item.name: item
+            for item in package_manifest.local_dependencies
+        }
+        if package_manifest is not None
+        else {}
+    )
+    resolved_local_dependencies: dict[str, PackageReference] = {}
+    local_dependencies: list[dict[str, object]] = []
+    if package_manifest is not None:
+        for dependency_name in sorted(local_dependency_by_name):
+            declaration = local_dependency_by_name[dependency_name]
+            status = "resolved"
+            target: str | None = None
+            try:
+                reference = resolve_package_reference(
+                    root,
+                    dependency_name,
+                    overlays=overlay_sources,
+                    manifest=package_manifest,
+                )
+                resolved_local_dependencies[dependency_name] = reference
+                target = _composition_relative(
+                    package_entry_path(
+                        reference.project_root,
+                        reference.declaration,
+                    ),
+                    root,
+                )
+            except (
+                PackageManifestError,
+                PackageReferenceError,
+            ) as exc:
+                status = "invalid"
+                package_diagnostics.append(
+                    {
+                        "code": "SEM006",
+                        "severity": "error",
+                        "message": str(exc),
+                        "line": 1,
+                        "column": 1,
+                    }
+                )
+            local_dependencies.append(
+                {
+                    "name": declaration.name,
+                    "project": declaration.project,
+                    "package": declaration.package,
+                    "version": declaration.version,
+                    "fingerprint": declaration.fingerprint,
+                    "target": target,
+                    "status": status,
+                }
+            )
 
     for declaration in package_by_name.values():
         candidate = package_entry_path(
@@ -351,6 +418,7 @@ def browse_project_modules(
                     if statement.package
                     else None
                 )
+                external_package = False
                 if statement.package:
                     declaration = package_by_name.get(
                         statement.path
@@ -361,10 +429,7 @@ def browse_project_modules(
                     if package_manifest is None:
                         target = None
                         issue = "package-manifest-invalid"
-                    elif declaration is None:
-                        target = None
-                        issue = "unknown-package"
-                    else:
+                    elif declaration is not None:
                         candidate = package_entry_path(
                             root,
                             declaration,
@@ -375,6 +440,26 @@ def browse_project_modules(
                             if candidate in available
                             else "missing"
                         )
+                    elif statement.path in local_dependency_by_name:
+                        reference = resolved_local_dependencies.get(
+                            statement.path
+                        )
+                        if reference is None:
+                            target = None
+                            issue = "local-dependency-invalid"
+                        else:
+                            external_package = True
+                            target = _composition_relative(
+                                package_entry_path(
+                                    reference.project_root,
+                                    reference.declaration,
+                                ),
+                                root,
+                            )
+                            issue = None
+                    else:
+                        target = None
+                        issue = "unknown-package"
                 else:
                     (
                         source_label,
@@ -406,7 +491,8 @@ def browse_project_modules(
                     }
                 )
                 if target is not None and issue is None:
-                    resolved_edges.add((relative, target))
+                    if not external_package:
+                        resolved_edges.add((relative, target))
                     if statement.package:
                         package_imports_by_module.setdefault(
                             relative,
@@ -591,6 +677,8 @@ def browse_project_modules(
         "edge_count": len(edges),
         "package_count": len(packages),
         "packages": packages,
+        "local_dependency_count": len(local_dependencies),
+        "local_dependencies": local_dependencies,
         "package_diagnostics": package_diagnostics,
         "modules": modules,
         "edges": [
