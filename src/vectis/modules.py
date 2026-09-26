@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
+import os
 from pathlib import Path
 from typing import Mapping
 
@@ -33,6 +34,10 @@ from vectis.package_manifest import (
     PackageManifestError,
     load_package_manifest,
     package_entry_path,
+)
+from vectis.package_reference import (
+    PackageReferenceError,
+    resolve_package_reference,
 )
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
@@ -73,6 +78,14 @@ def _inside_root(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def module_label_for(path: Path, root: Path) -> str:
+    """Return a deterministic composition-relative source label."""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return Path(os.path.relpath(path, root)).as_posix()
 
 
 def module_root_for(path: Path) -> Path:
@@ -152,9 +165,17 @@ def resolve_module_function_scope(
         Path,
         tuple[tuple[ImportStatement, Path], ...],
     ] | None = None,
+    module_labels: Mapping[Path, str] | None = None,
 ) -> ModuleFunctionScope:
     """Resolve durable function identity across one loaded module graph."""
     resolved_imports = imports_by_path or {}
+    explicit_labels = module_labels or {}
+
+    def label(module_path: Path) -> str:
+        return explicit_labels.get(
+            module_path,
+            module_label_for(module_path, root),
+        )
     namespace_by_path: dict[Path, tuple[str, SourceSpan]] = {}
 
     for module_path, program in programs.items():
@@ -163,7 +184,7 @@ def resolve_module_function_scope(
             for statement in program.statements
             if isinstance(statement, NamespaceDeclaration)
         )
-        module_label = module_path.relative_to(root).as_posix()
+        module_label = label(module_path)
         if len(namespaces) > 1:
             raise ModuleError(
                 (
@@ -213,7 +234,7 @@ def resolve_module_function_scope(
         name: str,
     ) -> ModuleFunctionId:
         return ModuleFunctionId(
-            module=module_path.relative_to(root).as_posix(),
+            module=label(module_path),
             name=name,
         )
 
@@ -268,7 +289,7 @@ def resolve_module_function_scope(
 
             if statement.names is None:
                 continue
-            target_label = target_path.relative_to(root).as_posix()
+            target_label = label(target_path)
             target_declarations = direct.get(target_path, {})
             for name in statement.names:
                 target_pair = target_declarations.get(name)
@@ -426,7 +447,7 @@ def resolve_module_function_scope(
                         existing_span,
                     )
                     return
-                importer = module_path.relative_to(root).as_posix()
+                importer = label(module_path)
                 raise ModuleError(
                     (
                         "duplicate module qualifier in module "
@@ -505,7 +526,7 @@ def resolve_module_function_scope(
 
             if node.qualifier is not None:
                 qualified_import = qualifiers.get(node.qualifier)
-                importer = module_path.relative_to(root).as_posix()
+                importer = label(module_path)
                 if qualified_import is None:
                     if graph_has_namespace or graph_has_package:
                         message = (
@@ -528,7 +549,7 @@ def resolve_module_function_scope(
                     selected_names,
                     _qualifier_span,
                 ) = qualified_import
-                target_label = target_path.relative_to(root).as_posix()
+                target_label = label(target_path)
                 pair = direct.get(
                     target_path,
                     {},
@@ -617,7 +638,7 @@ def resolve_module_function_scope(
                 continue
 
             if len(candidates) > 1:
-                importer = module_path.relative_to(root).as_posix()
+                importer = label(module_path)
                 rendered = ", ".join(
                     item.label
                     for item in candidates
@@ -642,7 +663,7 @@ def resolve_module_function_scope(
                 target_path != module_path
                 and target.visibility == "private"
             ):
-                owner = target_path.relative_to(root).as_posix()
+                owner = label(target_path)
                 raise ModuleError(
                     (
                         f"function {node.name!r} is private to "
@@ -655,7 +676,7 @@ def resolve_module_function_scope(
                 constrained_bare_mode
                 and function_id not in allowed_bare
             ):
-                importer = module_path.relative_to(root).as_posix()
+                importer = label(module_path)
                 if (
                     legacy_selective_mode
                     and not graph_has_alias
@@ -731,52 +752,53 @@ def load_program_file(
     entry_executable: list[Statement] = []
     entry_program: Program | None = None
 
-    package_manifest: PackageManifest | None = None
-    package_manifest_loaded = False
+    manifests_by_root: dict[Path, PackageManifest] = {}
+    project_root_by_path: dict[Path, Path] = {
+        entry: project_root,
+    }
 
-    def project_packages() -> PackageManifest:
-        nonlocal package_manifest
-        nonlocal package_manifest_loaded
-
-        if not package_manifest_loaded:
-            package_manifest = load_package_manifest(
-                project_root,
-                require=True,
-            )
-            package_manifest_loaded = True
-
-        if package_manifest is None:
-            raise RuntimeError(
-                "package manifest cache did not initialize"
-            )
-        return package_manifest
+    def project_packages(owner_root: Path) -> PackageManifest:
+        cached = manifests_by_root.get(owner_root)
+        if cached is not None:
+            return cached
+        manifest = load_package_manifest(
+            owner_root,
+            require=True,
+        )
+        manifests_by_root[owner_root] = manifest
+        return manifest
 
     def resolve_import(
         statement: ImportStatement,
         importer: Path,
-    ) -> Path:
+    ) -> tuple[Path, Path]:
+        importer_root = project_root_by_path.get(importer)
+        if importer_root is None:
+            raise RuntimeError(
+                "module project root was not registered"
+            )
+
         if statement.package:
             try:
-                manifest = project_packages()
-            except PackageManifestError as exc:
+                reference = resolve_package_reference(
+                    importer_root,
+                    statement.path,
+                    manifest=project_packages(importer_root),
+                )
+            except (PackageManifestError, PackageReferenceError) as exc:
                 raise ModuleError(
                     str(exc),
                     span=statement.span,
                 ) from exc
 
-            declaration = manifest.package(
-                statement.path
+            manifests_by_root.setdefault(
+                reference.project_root,
+                reference.manifest,
             )
-            if declaration is None:
-                raise ModuleError(
-                    f"unknown package {statement.path!r}",
-                    span=statement.span,
-                )
-
             try:
                 candidate = package_entry_path(
-                    project_root,
-                    declaration,
+                    reference.project_root,
+                    reference.declaration,
                 )
             except PackageManifestError as exc:
                 raise ModuleError(
@@ -786,10 +808,10 @@ def load_program_file(
 
             if not _inside_root(
                 candidate,
-                project_root,
+                reference.project_root,
             ):
                 raise ModuleError(
-                    "package entry escapes the module root",
+                    "package entry escapes its owning project root",
                     span=statement.span,
                 )
 
@@ -797,12 +819,12 @@ def load_program_file(
                 raise ModuleError(
                     (
                         "package entry does not exist: "
-                        f"{declaration.entry}"
+                        f"{reference.declaration.entry}"
                     ),
                     span=statement.span,
                 )
 
-            return candidate
+            return candidate, reference.project_root
 
         raw = Path(statement.path)
 
@@ -814,9 +836,18 @@ def load_program_file(
 
         candidate = (importer.parent / raw).resolve()
 
-        if not _inside_root(candidate, project_root):
+        if not _inside_root(candidate, importer_root):
             raise ModuleError(
-                "import path escapes the module root",
+                "import path escapes the owning project root",
+                span=statement.span,
+            )
+        candidate_project_root = module_root_for(candidate)
+        if (
+            (candidate_project_root / "vectis.toml").is_file()
+            and candidate_project_root != importer_root
+        ):
+            raise ModuleError(
+                "import path crosses a project boundary; use a package import",
                 span=statement.span,
             )
 
@@ -832,7 +863,7 @@ def load_program_file(
                 span=statement.span,
             )
 
-        return candidate
+        return candidate, importer_root
 
     def visit(module_path: Path, *, is_entry: bool) -> None:
         nonlocal entry_program
@@ -847,7 +878,7 @@ def load_program_file(
                 module_path,
             ]
             rendered = " -> ".join(
-                str(item.relative_to(project_root))
+                module_label_for(item, project_root)
                 for item in cycle
             )
             span = (
@@ -881,16 +912,21 @@ def load_program_file(
             if isinstance(statement, ImportStatement)
         )
 
-        resolved = tuple(
-            (
+        resolved_items: list[tuple[ImportStatement, Path]] = []
+        for statement in imports:
+            target, target_root = resolve_import(
                 statement,
-                resolve_import(
-                    statement,
-                    module_path,
-                ),
+                module_path,
             )
-            for statement in imports
-        )
+            existing_root = project_root_by_path.get(target)
+            if existing_root is not None and existing_root != target_root:
+                raise ModuleError(
+                    "one source module resolved to multiple project roots",
+                    span=statement.span,
+                )
+            project_root_by_path[target] = target_root
+            resolved_items.append((statement, target))
+        resolved = tuple(resolved_items)
         resolved_imports[module_path] = resolved
 
         for _statement, target in resolved:
@@ -951,21 +987,29 @@ def load_program_file(
 
     visit(entry, is_entry=True)
 
-    if package_manifest_loaded and package_manifest is not None:
+    for owner_root in sorted(
+        manifests_by_root,
+        key=lambda item: module_label_for(item, project_root),
+    ):
         validate_package_composition(
             program_by_path,
-            root=project_root,
+            root=owner_root,
             imports_by_path=resolved_imports,
-            manifest=package_manifest,
+            manifest=manifests_by_root[owner_root],
         )
 
     if entry_program is None:
         raise RuntimeError("module loader did not produce an entry program")
 
+    module_labels = {
+        module_path: module_label_for(module_path, project_root)
+        for module_path in program_by_path
+    }
     function_scope = resolve_module_function_scope(
         program_by_path,
         root=project_root,
         imports_by_path=resolved_imports,
+        module_labels=module_labels,
     )
 
     merged = Program(

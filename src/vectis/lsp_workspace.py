@@ -37,6 +37,7 @@ from vectis.lsp_position import (
 )
 from vectis.modules import (
     ModuleError,
+    module_label_for,
     module_root_for,
     resolve_module_function_scope,
     validate_package_composition,
@@ -46,6 +47,10 @@ from vectis.package_manifest import (
     PackageManifestError,
     load_package_manifest,
     package_entry_path,
+)
+from vectis.package_reference import (
+    PackageReferenceError,
+    resolve_package_reference,
 )
 from vectis.parser import parse
 from vectis.source_span import SourceSpan
@@ -177,52 +182,54 @@ def load_workspace_program(
             or module_path.is_file()
         )
 
-    package_manifest: PackageManifest | None = None
-    package_manifest_loaded = False
+    manifests_by_root: dict[Path, PackageManifest] = {}
+    project_root_by_path: dict[Path, Path] = {
+        entry: project_root,
+    }
 
-    def project_packages() -> PackageManifest:
-        nonlocal package_manifest
-        nonlocal package_manifest_loaded
-
-        if not package_manifest_loaded:
-            package_manifest = load_package_manifest(
-                project_root,
-                require=True,
-            )
-            package_manifest_loaded = True
-
-        if package_manifest is None:
-            raise RuntimeError(
-                "package manifest cache did not initialize"
-            )
-        return package_manifest
+    def project_packages(owner_root: Path) -> PackageManifest:
+        cached = manifests_by_root.get(owner_root)
+        if cached is not None:
+            return cached
+        manifest = load_package_manifest(
+            owner_root,
+            require=True,
+        )
+        manifests_by_root[owner_root] = manifest
+        return manifest
 
     def resolve_import(
         statement: ImportStatement,
         importer: Path,
-    ) -> Path:
+    ) -> tuple[Path, Path]:
+        importer_root = project_root_by_path.get(importer)
+        if importer_root is None:
+            raise RuntimeError(
+                "module project root was not registered"
+            )
+
         if statement.package:
             try:
-                manifest = project_packages()
-            except PackageManifestError as exc:
+                reference = resolve_package_reference(
+                    importer_root,
+                    statement.path,
+                    overlays=overlay_sources,
+                    manifest=project_packages(importer_root),
+                )
+            except (PackageManifestError, PackageReferenceError) as exc:
                 raise ModuleError(
                     str(exc),
                     span=statement.span,
                 ) from exc
 
-            declaration = manifest.package(
-                statement.path
+            manifests_by_root.setdefault(
+                reference.project_root,
+                reference.manifest,
             )
-            if declaration is None:
-                raise ModuleError(
-                    f"unknown package {statement.path!r}",
-                    span=statement.span,
-                )
-
             try:
                 candidate = package_entry_path(
-                    project_root,
-                    declaration,
+                    reference.project_root,
+                    reference.declaration,
                 )
             except PackageManifestError as exc:
                 raise ModuleError(
@@ -232,10 +239,10 @@ def load_workspace_program(
 
             if not _inside_root(
                 candidate,
-                project_root,
+                reference.project_root,
             ):
                 raise ModuleError(
-                    "package entry escapes the module root",
+                    "package entry escapes its owning project root",
                     span=statement.span,
                 )
 
@@ -243,12 +250,12 @@ def load_workspace_program(
                 raise ModuleError(
                     (
                         "package entry does not exist: "
-                        f"{declaration.entry}"
+                        f"{reference.declaration.entry}"
                     ),
                     span=statement.span,
                 )
 
-            return candidate
+            return candidate, reference.project_root
 
         raw = Path(statement.path)
 
@@ -264,10 +271,19 @@ def load_workspace_program(
 
         if not _inside_root(
             candidate,
-            project_root,
+            importer_root,
         ):
             raise ModuleError(
-                "import path escapes the module root",
+                "import path escapes the owning project root",
+                span=statement.span,
+            )
+        candidate_project_root = module_root_for(candidate)
+        if (
+            (candidate_project_root / "vectis.toml").is_file()
+            and candidate_project_root != importer_root
+        ):
+            raise ModuleError(
+                "import path crosses a project boundary; use a package import",
                 span=statement.span,
             )
 
@@ -286,7 +302,7 @@ def load_workspace_program(
                 span=statement.span,
             )
 
-        return candidate
+        return candidate, importer_root
 
     def visit(
         module_path: Path,
@@ -305,7 +321,7 @@ def load_workspace_program(
                 module_path,
             ]
             rendered = " -> ".join(
-                str(item.relative_to(project_root))
+                module_label_for(item, project_root)
                 for item in cycle
             )
             current = program_by_path.get(
@@ -346,16 +362,21 @@ def load_workspace_program(
             )
         )
 
-        resolved = tuple(
-            (
+        resolved_items: list[tuple[ImportStatement, Path]] = []
+        for statement in imports:
+            target, target_root = resolve_import(
                 statement,
-                resolve_import(
-                    statement,
-                    module_path,
-                ),
+                module_path,
             )
-            for statement in imports
-        )
+            existing_root = project_root_by_path.get(target)
+            if existing_root is not None and existing_root != target_root:
+                raise ModuleError(
+                    "one source module resolved to multiple project roots",
+                    span=statement.span,
+                )
+            project_root_by_path[target] = target_root
+            resolved_items.append((statement, target))
+        resolved = tuple(resolved_items)
         resolved_imports[module_path] = resolved
 
         for _statement, target in resolved:
@@ -425,12 +446,15 @@ def load_workspace_program(
 
     visit(entry, is_entry=True)
 
-    if package_manifest_loaded and package_manifest is not None:
+    for owner_root in sorted(
+        manifests_by_root,
+        key=lambda item: module_label_for(item, project_root),
+    ):
         validate_package_composition(
             program_by_path,
-            root=project_root,
+            root=owner_root,
             imports_by_path=resolved_imports,
-            manifest=package_manifest,
+            manifest=manifests_by_root[owner_root],
         )
 
     if entry_program is None:
@@ -438,10 +462,15 @@ def load_workspace_program(
             "workspace loader did not produce an entry program"
         )
 
+    module_labels = {
+        module_path: module_label_for(module_path, project_root)
+        for module_path in program_by_path
+    }
     function_scope = resolve_module_function_scope(
         program_by_path,
         root=project_root,
         imports_by_path=resolved_imports,
+        module_labels=module_labels,
     )
 
     merged = Program(

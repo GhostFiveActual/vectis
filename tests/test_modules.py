@@ -259,7 +259,7 @@ mission "demo" { publish shared(true); }
 
             with self.assertRaisesRegex(
                 ModuleError,
-                "escapes the module root",
+                "escapes the owning project root",
             ):
                 load_program_file(entry)
 

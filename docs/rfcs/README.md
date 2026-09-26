@@ -43,6 +43,7 @@ The RFC process exists so language growth remains deliberate, reviewable, and co
 27. [RFC 0027: Deterministic packages and package imports](0027-deterministic-packages-package-imports.md)
 28. [RFC 0028: Versioned package composition](0028-versioned-package-composition.md)
 29. [RFC 0029: Deterministic package fingerprints](0029-deterministic-package-fingerprints.md)
+30. [RFC 0030: Local multi-project package dependencies](0030-local-multi-project-package-dependencies.md)
 
 ## When an RFC is required
 
